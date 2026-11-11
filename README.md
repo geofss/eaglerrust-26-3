@@ -4,9 +4,9 @@ A Rust + WebAssembly client reimplementation project targeting modern browsers.
 
 ## Current status
 
-The browser shell now boots a Rust-owned WebGL1 renderer. Rust builds a small voxel terrain mesh, uploads it to a GPU buffer, compiles vertex/fragment shaders, and renders it with a perspective camera that slowly orbits the scene.
+The browser shell boots a Rust-owned WebGL1 renderer. Rust stores block states in a 16×16×16 chunk section, builds exposed-face voxel geometry from that storage, uploads the mesh to a GPU buffer, and renders it with a perspective camera that slowly orbits the scene. Adjacent blocks omit their shared internal face, with unit tests covering the mesh output.
 
-This is the first real 3D rendering slice, not a playable Minecraft client. The scene is a tiny hard-coded terrain test; chunk loading, block registries, textures, player controls, world interaction, entities, and multiplayer are not implemented yet.
+This is still a renderer prototype, not a playable Minecraft client. The displayed sample section is populated procedurally inside Rust; real world generation, chunk streaming, block registries, textures, player controls, world interaction, entities, and multiplayer are not implemented yet.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ Serve the `web/` directory over HTTP; opening `index.html` directly with `file:/
 ## Next milestones
 
 1. Verify the voxel renderer on desktop and mobile browsers.
-2. Replace the hard-coded test terrain with chunk-backed world data.
+2. Expand chunk-backed rendering into a real chunk/world pipeline, including section boundaries and chunk lifecycle.
 3. Add block textures, atlas sampling, lighting, and fog.
 4. Add player camera controls and collision-aware movement.
 5. Port the remaining client systems and validate 26.3 compatibility.
