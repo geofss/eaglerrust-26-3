@@ -4,6 +4,7 @@ pub mod app;
 pub mod audio;
 pub mod input;
 pub mod network;
+pub mod physics;
 pub mod render;
 pub mod storage;
 pub mod world;
