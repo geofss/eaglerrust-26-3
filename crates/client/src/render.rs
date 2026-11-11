@@ -6,6 +6,7 @@
 use std::cell::RefCell;
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
+use crate::world::{BlockStateId, ChunkSection, LocalBlockPosition};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
     WebGlShader, WebGlUniformLocation,
@@ -249,43 +250,67 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 }
 
 // Each vertex stores position (xyz) followed by a face colour (rgb).
+/// Build a sample section using the same dense block storage used by the world model.
 fn build_terrain_mesh() -> Vec<f32> {
-    const HEIGHTS: [[i32; 3]; 3] = [[1, 2, 1], [2, 3, 2], [1, 2, 1]];
+    let mut section = ChunkSection::new();
+    const HEIGHTS: [[u8; 3]; 3] = [[1, 2, 1], [2, 3, 2], [1, 2, 1]];
+
+    for x in 0..3 {
+        for z in 0..3 {
+            for y in 0..HEIGHTS[x][z] {
+                section.set(
+                    LocalBlockPosition { x: x as u8, y, z: z as u8 },
+                    BlockStateId(1),
+                );
+            }
+        }
+    }
+
+    build_section_mesh(&section)
+}
+
+/// Convert occupied cells into exposed-face geometry.
+/// Neighbour checks happen against block storage, so internal cube faces are omitted.
+fn build_section_mesh(section: &ChunkSection) -> Vec<f32> {
     let mut vertices = Vec::new();
 
-    for gx in 0..3 {
-        for gz in 0..3 {
-            for gy in 0..HEIGHTS[gx][gz] {
-                let x0 = gx as f32 - 1.5;
-                let x1 = x0 + 1.0;
-                let y0 = gy as f32;
-                let y1 = y0 + 1.0;
-                let z0 = gz as f32 - 1.5;
-                let z1 = z0 + 1.0;
-                let is_grass = gy == HEIGHTS[gx][gz] - 1;
+    for y in 0..16_u8 {
+        for z in 0..16_u8 {
+            for x in 0..16_u8 {
+                let local = LocalBlockPosition { x, y, z };
+                if section.get(local) == BlockStateId(0) {
+                    continue;
+                }
 
-                let top = if is_grass { [0.28, 0.68, 0.22] } else { [0.43, 0.29, 0.16] };
+                let x0 = f32::from(x) - 8.0;
+                let x1 = x0 + 1.0;
+                let y0 = f32::from(y);
+                let y1 = y0 + 1.0;
+                let z0 = f32::from(z) - 8.0;
+                let z1 = z0 + 1.0;
+
+                let top = [0.28, 0.68, 0.22];
                 let side_a = [0.48, 0.32, 0.18];
                 let side_b = [0.38, 0.25, 0.14];
                 let side_c = [0.54, 0.36, 0.20];
-                let side_d = [0.32, 0.22, 0.13];
+                let bottom = [0.32, 0.22, 0.13];
 
-                if !solid_at(&HEIGHTS, gx as i32, gy + 1, gz as i32) {
+                if !section_is_solid(section, i16::from(x), i16::from(y) + 1, i16::from(z)) {
                     quad(&mut vertices, [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], top);
                 }
-                if !solid_at(&HEIGHTS, gx as i32, gy - 1, gz as i32) {
-                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y0,z0],[x0,y0,z0]], side_d);
+                if !section_is_solid(section, i16::from(x), i16::from(y) - 1, i16::from(z)) {
+                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y0,z0],[x0,y0,z0]], bottom);
                 }
-                if !solid_at(&HEIGHTS, gx as i32 - 1, gy, gz as i32) {
+                if !section_is_solid(section, i16::from(x) - 1, i16::from(y), i16::from(z)) {
                     quad(&mut vertices, [[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0]], side_a);
                 }
-                if !solid_at(&HEIGHTS, gx as i32 + 1, gy, gz as i32) {
+                if !section_is_solid(section, i16::from(x) + 1, i16::from(y), i16::from(z)) {
                     quad(&mut vertices, [[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1]], side_b);
                 }
-                if !solid_at(&HEIGHTS, gx as i32, gy, gz as i32 - 1) {
+                if !section_is_solid(section, i16::from(x), i16::from(y), i16::from(z) - 1) {
                     quad(&mut vertices, [[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0]], side_c);
                 }
-                if !solid_at(&HEIGHTS, gx as i32, gy, gz as i32 + 1) {
+                if !section_is_solid(section, i16::from(x), i16::from(y), i16::from(z) + 1) {
                     quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], side_a);
                 }
             }
@@ -295,11 +320,16 @@ fn build_terrain_mesh() -> Vec<f32> {
     vertices
 }
 
-fn solid_at(heights: &[[i32; 3]; 3], x: i32, y: i32, z: i32) -> bool {
-    (0..3).contains(&x)
-        && (0..3).contains(&z)
-        && y >= 0
-        && y < heights[x as usize][z as usize]
+fn section_is_solid(section: &ChunkSection, x: i16, y: i16, z: i16) -> bool {
+    if !(0..16).contains(&x) || !(0..16).contains(&y) || !(0..16).contains(&z) {
+        return false;
+    }
+
+    section.get(LocalBlockPosition {
+        x: x as u8,
+        y: y as u8,
+        z: z as u8,
+    }) != BlockStateId(0)
 }
 
 fn quad(vertices: &mut Vec<f32>, corners: [[f32; 3]; 4], color: [f32; 3]) {
@@ -369,7 +399,25 @@ fn normalize(vector: [f32; 3]) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::build_terrain_mesh;
+    use super::{build_section_mesh, build_terrain_mesh};
+    use crate::world::{BlockStateId, ChunkSection, LocalBlockPosition};
+
+    #[test]
+    fn one_block_emits_six_exposed_faces() {
+        let mut section = ChunkSection::new();
+        section.set(LocalBlockPosition { x: 4, y: 4, z: 4 }, BlockStateId(1));
+        let mesh = build_section_mesh(&section);
+        assert_eq!(mesh.len(), 6 * 6 * 6);
+    }
+
+    #[test]
+    fn adjacent_blocks_hide_their_shared_face() {
+        let mut section = ChunkSection::new();
+        section.set(LocalBlockPosition { x: 4, y: 4, z: 4 }, BlockStateId(1));
+        section.set(LocalBlockPosition { x: 5, y: 4, z: 4 }, BlockStateId(1));
+        let mesh = build_section_mesh(&section);
+        assert_eq!(mesh.len(), 10 * 6 * 6);
+    }
 
     #[test]
     fn voxel_mesh_has_complete_triangle_vertices() {
