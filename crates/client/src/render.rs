@@ -8,7 +8,7 @@ use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
-    WebGlRenderingContext, WebGlShader, WebGlUniformLocation,
+    WebGlShader, WebGlUniformLocation,
 };
 
 struct Renderer {
@@ -362,4 +362,18 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 fn normalize(vector: [f32; 3]) -> [f32; 3] {
     let length = dot(vector, vector).sqrt().max(0.0001);
     [vector[0] / length, vector[1] / length, vector[2] / length]
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::build_terrain_mesh;
+
+    #[test]
+    fn voxel_mesh_has_complete_triangle_vertices() {
+        let mesh = build_terrain_mesh();
+        assert!(!mesh.is_empty());
+        assert_eq!(mesh.len() % 18, 0, "each triangle has three xyz+rgb vertices");
+        assert!(mesh.iter().all(|value| value.is_finite()));
+    }
 }
