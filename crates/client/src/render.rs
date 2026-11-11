@@ -282,11 +282,11 @@ fn build_section_mesh(section: &ChunkSection) -> Vec<f32> {
                     continue;
                 }
 
-                let x0 = f32::from(x) - 8.0;
+                let x0 = f32::from(x) - 1.5;
                 let x1 = x0 + 1.0;
                 let y0 = f32::from(y);
                 let y1 = y0 + 1.0;
-                let z0 = f32::from(z) - 8.0;
+                let z0 = f32::from(z) - 1.5;
                 let z1 = z0 + 1.0;
 
                 let top = [0.28, 0.68, 0.22];
