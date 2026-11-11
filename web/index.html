@@ -134,12 +134,12 @@
       <div class="screen-head">
         <i class="dot"></i><i class="dot"></i><i class="dot"></i>
         <span>renderer.viewport</span>
-        <span>WEBGL1</span>
+        <span>WEBGL1 / VOXELS</span>
       </div>
       <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
       <div class="bottom">
         <div id="status" role="status">Starting Rust runtime…</div>
-        <div class="hint">Graphics bootstrap · World loading is not wired up yet</div>
+        <div class="hint">Graphics bootstrap · Rust voxel mesh · orbit camera</div>
       </div>
     </section>
   </main>
@@ -159,7 +159,7 @@
       await init();
       boot();
       start_renderer(canvasId);
-      status.textContent = "WebGL ready · Rust is drawing the viewport";
+      status.textContent = "Voxel scene ready · Rust mesh + orbit camera";
 
       window.addEventListener("resize", () => {
         try {
