@@ -1,17 +1,19 @@
 # EaglerRust 26.3
 
-A clean-room Rust + WebAssembly port project targeting modern browsers.
+A Rust + WebAssembly client reimplementation project targeting modern browsers.
 
 ## Current status
 
-This repository currently contains the build/deployment shell only. The original game runtime has **not** been ported yet. The supplied single-file HTML is a compiled distribution containing TeaVM-generated Java/WebAssembly code, JavaScript loader code, embedded binary payloads, and game resources; it is not the original Java source tree.
+The browser shell now boots a Rust-owned WebGL1 renderer. Rust builds a small voxel terrain mesh, uploads it to a GPU buffer, compiles vertex/fragment shaders, and renders it with a perspective camera that slowly orbits the scene.
+
+This is the first real 3D rendering slice, not a playable Minecraft client. The scene is a tiny hard-coded terrain test; chunk loading, block registries, textures, player controls, world interaction, entities, and multiplayer are not implemented yet.
 
 ## Architecture
 
-- **Rust + wasm-bindgen:** browser-side application and gameplay systems.
-- **HTML/CSS/JavaScript:** minimal page shell and WASM bootstrap only.
-- **GitHub Actions:** compile `wasm32-unknown-unknown` and publish the `web/` directory.
-- **GitHub Pages:** static hosting for the browser build.
+- **Rust + wasm-bindgen:** mesh generation, camera math, renderer setup, and frame submission.
+- **WebAssembly + WebGL1:** browser GPU rendering through web-sys bindings.
+- **HTML/CSS/JavaScript:** page shell, WASM bootstrap, resize handling, and animation-frame scheduling.
+- **GitHub Actions:** native tests, WASM build, and GitHub Pages deployment.
 
 ## Build locally
 
@@ -24,12 +26,12 @@ wasm-pack build --target web --release --out-dir ../../web/pkg
 
 Serve the `web/` directory over HTTP; opening `index.html` directly with `file://` will not work because browsers restrict WASM module loading.
 
-## Porting plan
+## Next milestones
 
-1. Inventory the compiled HTML distribution and identify runtime boundaries, data formats, and browser APIs.
-2. Recover or obtain the original Java source and build configuration where available.
-3. Define Rust modules and stable interfaces for rendering, input, world/chunk data, networking, audio, and persistence.
-4. Port and test one subsystem at a time against observable behavior.
-5. Remove legacy TeaVM/game runtime dependencies only after equivalent Rust implementations pass compatibility tests.
+1. Verify the voxel renderer on desktop and mobile browsers.
+2. Replace the hard-coded test terrain with chunk-backed world data.
+3. Add block textures, atlas sampling, lighting, and fog.
+4. Add player camera controls and collision-aware movement.
+5. Port the remaining client systems and validate 26.3 compatibility.
 
-A compiled TeaVM/WASM artifact is not a reliable substitute for the original Java source. This repository deliberately does not claim a complete rewrite until the systems are actually implemented and tested.
+A compiled TeaVM/WASM artifact is not a substitute for the original Java source. The project will keep distinguishing implemented Rust systems from compatibility work that is still planned.
