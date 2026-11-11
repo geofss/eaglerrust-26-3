@@ -173,8 +173,10 @@ pub fn draw_frame() -> Result<(), JsValue> {
             .ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
 
         renderer.camera_angle += 0.004;
-        let canvas = renderer.gl.canvas()
-            .ok_or_else(|| JsValue::from_str("WebGL canvas is unavailable"))?;
+        let canvas: HtmlCanvasElement = renderer.gl.canvas()
+            .ok_or_else(|| JsValue::from_str("WebGL canvas is unavailable"))?
+            .dyn_into()
+            .map_err(|_| JsValue::from_str("WebGL canvas is not an HTML canvas"))?;
         let width = canvas.width().max(1) as f32;
         let height = canvas.height().max(1) as f32;
 
