@@ -69,7 +69,7 @@ Implement and test small end-to-end slices rather than attempting a full rewrite
 2. core registries/data structures
 3. chunk decoding and world representation
 4. input and basic camera
-5. first rendered scene
+5. first rendered scene (initial hard-coded voxel terrain prototype now exists)
 6. entity updates and physics
 7. protocol handshake and multiplayer
 8. assets, audio, persistence, and remaining gameplay
@@ -90,4 +90,4 @@ Maintain a compatibility checklist against the 26.3 target. Test browser builds,
 
 ## Current status
 
-The repository currently has a minimal Rust/WASM shell and Pages workflow. It is not yet a playable client. The 26.1.2 archive has had a preliminary file-count inventory, but its documentation and source packages have not yet been fully audited. The next concrete milestone is Phase 0: complete the source map and 26.1.2-to-26.3 comparison.
+The repository now boots a Rust-owned WebGL1 renderer and draws a small hard-coded voxel terrain mesh with shaders, depth testing, perspective projection, and an orbiting camera. This is a graphics prototype, not a playable client: chunk streaming, block registries, textures, player controls, world interaction, entities, and multiplayer remain unimplemented. The 26.1.2 archive has had a preliminary file-count inventory, but its documentation and source packages have not yet been fully audited. Continue the Phase 0 source map alongside renderer validation and chunk-backed world integration.
