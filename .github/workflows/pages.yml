@@ -24,6 +24,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run native unit tests
+        run: cargo test --workspace
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
       - name: Build browser WASM
