@@ -1,14 +1,27 @@
-//! First browser renderer: a real WebGL1 context with a tiny frame loop.
+//! A small, real voxel renderer built on browser WebGL1.
 //!
-//! This is deliberately just the graphics bootstrap. It proves the browser
-//! canvas -> Rust/WASM -> WebGL path before we add shaders, meshes and chunks.
+//! Rust creates the block mesh, owns the camera and submits every frame.
+//! This is a renderer milestone, not yet the complete Minecraft client.
 
 use std::cell::RefCell;
+use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
-use web_sys::{HtmlCanvasElement, WebGlRenderingContext};
+use web_sys::{
+    HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
+    WebGlRenderingContext, WebGlShader, WebGlUniformLocation,
+};
+
+struct Renderer {
+    gl: Gl,
+    program: WebGlProgram,
+    vertex_buffer: WebGlBuffer,
+    matrix_location: WebGlUniformLocation,
+    vertex_count: i32,
+    camera_angle: f32,
+}
 
 thread_local! {
-    static GL: RefCell<Option<WebGlRenderingContext>> = const { RefCell::new(None) };
+    static RENDERER: RefCell<Option<Renderer>> = const { RefCell::new(None) };
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +38,28 @@ impl Default for RenderState {
     }
 }
 
-/// Find the canvas, ask the browser for WebGL1, and paint the first frame.
+const VERTEX_SHADER: &str = r#"
+attribute vec3 a_position;
+attribute vec3 a_color;
+uniform mat4 u_view_projection;
+varying vec3 v_color;
+
+void main() {
+    gl_Position = u_view_projection * vec4(a_position, 1.0);
+    v_color = a_color;
+}
+"#;
+
+const FRAGMENT_SHADER: &str = r#"
+precision mediump float;
+varying vec3 v_color;
+
+void main() {
+    gl_FragColor = vec4(v_color, 1.0);
+}
+"#;
+
+/// Start WebGL, build the voxel mesh, and draw the first frame.
 pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("Window is unavailable"))?;
     let document = window
@@ -41,16 +75,69 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
     let context = canvas
         .get_context("webgl")?
         .ok_or_else(|| JsValue::from_str("WebGL1 is not available in this browser"))?;
-    let gl: WebGlRenderingContext = context
+    let gl: Gl = context
         .dyn_into()
         .map_err(|_| JsValue::from_str("Could not create a WebGL1 context"))?;
 
-    GL.with(|slot| *slot.borrow_mut() = Some(gl));
+    let program = link_program(&gl)?;
+    let vertex_buffer = gl
+        .create_buffer()
+        .ok_or_else(|| JsValue::from_str("Could not allocate the terrain buffer"))?;
+    let matrix_location = gl
+        .get_uniform_location(&program, "u_view_projection")
+        .ok_or_else(|| JsValue::from_str("Camera matrix uniform is missing"))?;
+
+    let vertices = build_terrain_mesh();
+    let vertex_count = (vertices.len() / 6) as i32;
+    let vertex_data = Float32Array::from(vertices.as_slice());
+
+    gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&vertex_buffer));
+    gl.buffer_data_with_array_buffer_view(
+        Gl::ARRAY_BUFFER,
+        &vertex_data,
+        Gl::STATIC_DRAW,
+    );
+
+    gl.use_program(Some(&program));
+    let position = gl.get_attrib_location(&program, "a_position");
+    let color = gl.get_attrib_location(&program, "a_color");
+    if position < 0 || color < 0 {
+        return Err(JsValue::from_str("Terrain shader attributes were not found"));
+    }
+
+    let stride = (6 * std::mem::size_of::<f32>()) as i32;
+    gl.enable_vertex_attrib_array(position as u32);
+    gl.vertex_attrib_pointer_with_i32(position as u32, 3, Gl::FLOAT, false, stride, 0);
+    gl.enable_vertex_attrib_array(color as u32);
+    gl.vertex_attrib_pointer_with_i32(
+        color as u32,
+        3,
+        Gl::FLOAT,
+        false,
+        stride,
+        (3 * std::mem::size_of::<f32>()) as i32,
+    );
+
+    gl.enable(Gl::DEPTH_TEST);
+    gl.depth_func(Gl::LEQUAL);
+    gl.clear_color(0.48, 0.72, 0.91, 1.0);
+
+    RENDERER.with(|slot| {
+        *slot.borrow_mut() = Some(Renderer {
+            gl,
+            program,
+            vertex_buffer,
+            matrix_location,
+            vertex_count,
+            camera_angle: 0.0,
+        });
+    });
+
     resize_renderer(canvas_id)?;
     draw_frame()
 }
 
-/// Match the drawing buffer to the canvas's displayed size.
+/// Keep the drawing buffer sharp when the browser viewport changes size.
 pub fn resize_renderer(canvas_id: &str) -> Result<(), JsValue> {
     let document = web_sys::window()
         .and_then(|window| window.document())
@@ -67,26 +154,212 @@ pub fn resize_renderer(canvas_id: &str) -> Result<(), JsValue> {
     canvas.set_width(width);
     canvas.set_height(height);
 
-    GL.with(|slot| {
-        if let Some(gl) = slot.borrow().as_ref() {
-            gl.viewport(0, 0, width as i32, height as i32);
-            Ok(())
-        } else {
-            Err(JsValue::from_str("Renderer has not been started"))
-        }
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let renderer = borrowed
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        renderer.gl.viewport(0, 0, width as i32, height as i32);
+        Ok(())
     })
 }
 
-/// Draw one frame. The scene is only a clear colour for now.
+/// Render one frame from Rust, with a gently orbiting perspective camera.
 pub fn draw_frame() -> Result<(), JsValue> {
-    GL.with(|slot| {
-        let borrowed = slot.borrow();
-        let gl = borrowed
-            .as_ref()
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let renderer = borrowed
+            .as_mut()
             .ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
 
-        gl.clear_color(0.035, 0.055, 0.09, 1.0);
-        gl.clear(WebGlRenderingContext::COLOR_BUFFER_BIT);
+        renderer.camera_angle += 0.004;
+        let canvas = renderer.gl.canvas()
+            .ok_or_else(|| JsValue::from_str("WebGL canvas is unavailable"))?;
+        let width = canvas.width().max(1) as f32;
+        let height = canvas.height().max(1) as f32;
+
+        let eye = [
+            renderer.camera_angle.sin() * 5.8,
+            3.8,
+            renderer.camera_angle.cos() * 5.8,
+        ];
+        let view = look_at(eye, [0.0, 1.0, 0.0], [0.0, 1.0, 0.0]);
+        let projection = perspective(55.0_f32.to_radians(), width / height, 0.1, 100.0);
+        let view_projection = multiply(projection, view);
+
+        renderer.gl.use_program(Some(&renderer.program));
+        renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&renderer.vertex_buffer));
+        renderer.gl.uniform_matrix4fv_with_f32_array(
+            Some(&renderer.matrix_location),
+            false,
+            &view_projection,
+        );
+        renderer.gl.clear(Gl::COLOR_BUFFER_BIT | Gl::DEPTH_BUFFER_BIT);
+        renderer.gl.draw_arrays(Gl::TRIANGLES, 0, renderer.vertex_count);
         Ok(())
     })
+}
+
+fn compile_shader(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
+    let shader = gl
+        .create_shader(kind)
+        .ok_or_else(|| JsValue::from_str("Could not create WebGL shader"))?;
+    gl.shader_source(&shader, source);
+    gl.compile_shader(&shader);
+
+    if gl
+        .get_shader_parameter(&shader, Gl::COMPILE_STATUS)
+        .as_bool()
+        .unwrap_or(false)
+    {
+        Ok(shader)
+    } else {
+        let message = gl
+            .get_shader_info_log(&shader)
+            .unwrap_or_else(|| "Unknown shader compilation error".to_owned());
+        Err(JsValue::from_str(&message))
+    }
+}
+
+fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
+    let vertex = compile_shader(gl, Gl::VERTEX_SHADER, VERTEX_SHADER)?;
+    let fragment = compile_shader(gl, Gl::FRAGMENT_SHADER, FRAGMENT_SHADER)?;
+    let program = gl
+        .create_program()
+        .ok_or_else(|| JsValue::from_str("Could not create WebGL program"))?;
+
+    gl.attach_shader(&program, &vertex);
+    gl.attach_shader(&program, &fragment);
+    gl.link_program(&program);
+
+    if gl
+        .get_program_parameter(&program, Gl::LINK_STATUS)
+        .as_bool()
+        .unwrap_or(false)
+    {
+        Ok(program)
+    } else {
+        let message = gl
+            .get_program_info_log(&program)
+            .unwrap_or_else(|| "Unknown shader link error".to_owned());
+        Err(JsValue::from_str(&message))
+    }
+}
+
+// Each vertex stores position (xyz) followed by a face colour (rgb).
+fn build_terrain_mesh() -> Vec<f32> {
+    const HEIGHTS: [[i32; 3]; 3] = [[1, 2, 1], [2, 3, 2], [1, 2, 1]];
+    let mut vertices = Vec::new();
+
+    for gx in 0..3 {
+        for gz in 0..3 {
+            for gy in 0..HEIGHTS[gx][gz] {
+                let x0 = gx as f32 - 1.5;
+                let x1 = x0 + 1.0;
+                let y0 = gy as f32;
+                let y1 = y0 + 1.0;
+                let z0 = gz as f32 - 1.5;
+                let z1 = z0 + 1.0;
+                let is_grass = gy == HEIGHTS[gx][gz] - 1;
+
+                let top = if is_grass { [0.28, 0.68, 0.22] } else { [0.43, 0.29, 0.16] };
+                let side_a = [0.48, 0.32, 0.18];
+                let side_b = [0.38, 0.25, 0.14];
+                let side_c = [0.54, 0.36, 0.20];
+                let side_d = [0.32, 0.22, 0.13];
+
+                if !solid_at(&HEIGHTS, gx as i32, gy + 1, gz as i32) {
+                    quad(&mut vertices, [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], top);
+                }
+                if !solid_at(&HEIGHTS, gx as i32, gy - 1, gz as i32) {
+                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y0,z0],[x0,y0,z0]], side_d);
+                }
+                if !solid_at(&HEIGHTS, gx as i32 - 1, gy, gz as i32) {
+                    quad(&mut vertices, [[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0]], side_a);
+                }
+                if !solid_at(&HEIGHTS, gx as i32 + 1, gy, gz as i32) {
+                    quad(&mut vertices, [[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1]], side_b);
+                }
+                if !solid_at(&HEIGHTS, gx as i32, gy, gz as i32 - 1) {
+                    quad(&mut vertices, [[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0]], side_c);
+                }
+                if !solid_at(&HEIGHTS, gx as i32, gy, gz as i32 + 1) {
+                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], side_a);
+                }
+            }
+        }
+    }
+
+    vertices
+}
+
+fn solid_at(heights: &[[i32; 3]; 3], x: i32, y: i32, z: i32) -> bool {
+    (0..3).contains(&x)
+        && (0..3).contains(&z)
+        && y >= 0
+        && y < heights[x as usize][z as usize]
+}
+
+fn quad(vertices: &mut Vec<f32>, corners: [[f32; 3]; 4], color: [f32; 3]) {
+    for index in [0, 1, 2, 0, 2, 3] {
+        vertices.extend_from_slice(&corners[index]);
+        vertices.extend_from_slice(&color);
+    }
+}
+
+fn perspective(fov: f32, aspect: f32, near: f32, far: f32) -> [f32; 16] {
+    let f = 1.0 / (fov * 0.5).tan();
+    let range = 1.0 / (near - far);
+    [
+        f / aspect, 0.0, 0.0, 0.0,
+        0.0, f, 0.0, 0.0,
+        0.0, 0.0, (far + near) * range, -1.0,
+        0.0, 0.0, (2.0 * far * near) * range, 0.0,
+    ]
+}
+
+fn look_at(eye: [f32; 3], target: [f32; 3], up: [f32; 3]) -> [f32; 16] {
+    let forward = normalize(subtract(target, eye));
+    let side = normalize(cross(forward, up));
+    let corrected_up = cross(side, forward);
+
+    [
+        side[0], corrected_up[0], -forward[0], 0.0,
+        side[1], corrected_up[1], -forward[1], 0.0,
+        side[2], corrected_up[2], -forward[2], 0.0,
+        -dot(side, eye), -dot(corrected_up, eye), dot(forward, eye), 1.0,
+    ]
+}
+
+fn multiply(a: [f32; 16], b: [f32; 16]) -> [f32; 16] {
+    let mut result = [0.0; 16];
+    for column in 0..4 {
+        for row in 0..4 {
+            result[column * 4 + row] = (0..4)
+                .map(|index| a[index * 4 + row] * b[column * 4 + index])
+                .sum();
+        }
+    }
+    result
+}
+
+fn subtract(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn normalize(vector: [f32; 3]) -> [f32; 3] {
+    let length = dot(vector, vector).sqrt().max(0.0001);
+    [vector[0] / length, vector[1] / length, vector[2] / length]
 }
