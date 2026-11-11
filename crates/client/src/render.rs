@@ -26,7 +26,6 @@ impl Default for RenderState {
 }
 
 /// Find the canvas, ask the browser for WebGL1, and paint the first frame.
-#[wasm_bindgen]
 pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("Window is unavailable"))?;
     let document = window
@@ -52,7 +51,6 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
 }
 
 /// Match the drawing buffer to the canvas's displayed size.
-#[wasm_bindgen]
 pub fn resize_renderer(canvas_id: &str) -> Result<(), JsValue> {
     let document = web_sys::window()
         .and_then(|window| window.document())
@@ -80,7 +78,6 @@ pub fn resize_renderer(canvas_id: &str) -> Result<(), JsValue> {
 }
 
 /// Draw one frame. The scene is only a clear colour for now.
-#[wasm_bindgen]
 pub fn draw_frame() -> Result<(), JsValue> {
     GL.with(|slot| {
         let borrowed = slot.borrow();
