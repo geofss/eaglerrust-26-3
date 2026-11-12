@@ -123,6 +123,10 @@ pub const PROTOTYPE_ATLAS_TILE_SIZE: u32 = 16;
 pub fn prototype_atlas_pixels(layout: TextureAtlasLayout) -> Vec<u8> {
     let (width, height) = layout.dimensions();
     let mut pixels = vec![0_u8; width as usize * height as usize * 4];
+    // Fill unused cells in the rectangular atlas with an opaque fallback tile.
+    for rgba in pixels.chunks_exact_mut(4) {
+        rgba.copy_from_slice(&[224, 45, 224, 255]);
+    }
     let colors: [([u8; 3], [u8; 3]); 10] = [
         ([78, 166, 57], [91, 183, 67]),
         ([116, 83, 48], [78, 166, 57]),
