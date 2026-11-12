@@ -224,7 +224,7 @@ impl World {
         dirty
     }
 
-    pub fn section_count(&self) -> usize {
+    /// Ensure an empty section exists (used when restoring sparse snapshots).\n    pub fn ensure_section(&mut self, position: SectionPosition) {\n        self.sections.entry(position).or_default();\n    }\n\n    pub fn section_count(&self) -> usize {
         self.sections.len()
     }
 
