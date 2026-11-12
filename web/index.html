@@ -199,7 +199,8 @@
       </div>
       <div class="viewport-wrap">
         <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
-        <div id="hotbar" class="hotbar" aria-label="Prototype nine-slot hotbar"></div>\n        <div class="mobile-controls" aria-label="Touch movement controls">
+        <div id="hotbar" class="hotbar" aria-label="Prototype nine-slot hotbar"></div>
+        <div class="mobile-controls" aria-label="Touch movement controls">
           <div class="mobile-pad">
             <button type="button" data-key="w" aria-label="Move forward">▲</button>
             <button type="button" data-key="a" aria-label="Move left">◀</button>
@@ -227,7 +228,11 @@
       resize_renderer,
       draw_frame,
       set_key,
-      look
+      look,
+      select_hotbar_slot,
+      selected_hotbar_slot,
+      hotbar_item,
+      hotbar_count
     } from "./pkg/eaglerrust_client.js";
 
     const status = document.querySelector("#status");
