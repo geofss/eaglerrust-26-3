@@ -1,4 +1,18 @@
+use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
+
+use crate::inventory::Hotbar;
+use crate::world::BlockStateId;
+
+thread_local! {
+    static BROWSER_HOTBAR: RefCell<Hotbar> = RefCell::new({
+        let mut hotbar = Hotbar::default();
+        for state in [1_u32, 2, 3, 4, 5, 6, 7, 1, 2] {
+            hotbar.add(BlockStateId(state), 64);
+        }
+        hotbar
+    });
+}
 
 pub mod app;
 pub mod block;
@@ -51,4 +65,29 @@ pub fn look(delta_x: f32, delta_y: f32) {
 #[wasm_bindgen]
 pub fn draw_frame() -> Result<(), JsValue> {
     render::draw_frame()
+}
+
+
+/// Select one of the nine browser hotbar slots.
+#[wasm_bindgen]
+pub fn select_hotbar_slot(slot: u32) -> bool {
+    BROWSER_HOTBAR.with(|hotbar| hotbar.borrow_mut().select(slot as usize))
+}
+
+/// Return the selected browser hotbar slot.
+#[wasm_bindgen]
+pub fn selected_hotbar_slot() -> u32 {
+    BROWSER_HOTBAR.with(|hotbar| hotbar.borrow().selected_slot() as u32)
+}
+
+/// Return the prototype block-state ID in a hotbar slot (zero means empty).
+#[wasm_bindgen]
+pub fn hotbar_item(slot: u32) -> u32 {
+    BROWSER_HOTBAR.with(|hotbar| hotbar.borrow().slot(slot as usize).map(|stack| stack.item.0).unwrap_or(0))
+}
+
+/// Return the stack count in a hotbar slot.
+#[wasm_bindgen]
+pub fn hotbar_count(slot: u32) -> u32 {
+    BROWSER_HOTBAR.with(|hotbar| hotbar.borrow().slot(slot as usize).map(|stack| u32::from(stack.count)).unwrap_or(0))
 }
