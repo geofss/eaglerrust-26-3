@@ -3,7 +3,7 @@
 //! Rust creates the block mesh, owns the camera and submits every frame.
 //! This is a renderer milestone, not yet the complete Minecraft client.
 
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet};
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
 use crate::world::{BlockPosition, BlockStateId, SectionPosition, TerrainGenerator, World};
@@ -18,7 +18,10 @@ struct Renderer {
     vertex_buffer: WebGlBuffer,
     matrix_location: WebGlUniformLocation,
     vertex_count: i32,
-    camera_angle: f32,
+    camera_position: [f32; 3],
+    camera_yaw: f32,
+    camera_pitch: f32,
+    pressed_keys: HashSet<String>,
 }
 
 thread_local! {
@@ -130,7 +133,10 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             vertex_buffer,
             matrix_location,
             vertex_count,
-            camera_angle: 0.0,
+            camera_position: [0.0, 10.0, 22.0],
+            camera_yaw: 0.0,
+            camera_pitch: -0.28,
+            pressed_keys: HashSet::new(),
         });
     });
 
@@ -165,7 +171,33 @@ pub fn resize_renderer(canvas_id: &str) -> Result<(), JsValue> {
     })
 }
 
-/// Render one frame from Rust, with a gently orbiting perspective camera.
+/// Update a held keyboard key. Key names are normalized by the browser host.
+pub fn set_key(key: &str, pressed: bool) {
+    RENDERER.with(|slot| {
+        if let Some(renderer) = slot.borrow_mut().as_mut() {
+            let key = key.to_ascii_lowercase();
+            if pressed {
+                renderer.pressed_keys.insert(key);
+            } else {
+                renderer.pressed_keys.remove(&key);
+            }
+        }
+    });
+}
+
+/// Apply pointer or touch-look movement to the camera.
+pub fn look(delta_x: f32, delta_y: f32) {
+    RENDERER.with(|slot| {
+        if let Some(renderer) = slot.borrow_mut().as_mut() {
+            renderer.camera_yaw -= delta_x.clamp(-500.0, 500.0) * 0.003;
+            renderer.camera_pitch = (renderer.camera_pitch
+                - delta_y.clamp(-500.0, 500.0) * 0.003)
+                .clamp(-1.45, 1.45);
+        }
+    });
+}
+
+/// Render one frame using the player's keyboard-controlled free-fly camera.
 pub fn draw_frame() -> Result<(), JsValue> {
     RENDERER.with(|slot| {
         let mut borrowed = slot.borrow_mut();
@@ -173,7 +205,24 @@ pub fn draw_frame() -> Result<(), JsValue> {
             .as_mut()
             .ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
 
-        renderer.camera_angle += 0.004;
+        let forward = (renderer.pressed_keys.contains("w") as i32
+            - renderer.pressed_keys.contains("s") as i32) as f32;
+        let strafe = (renderer.pressed_keys.contains("d") as i32
+            - renderer.pressed_keys.contains("a") as i32) as f32;
+        let vertical = (renderer.pressed_keys.contains(" ") as i32
+            - renderer.pressed_keys.contains("shift") as i32) as f32;
+        let length = (forward * forward + strafe * strafe).sqrt().max(1.0);
+        let speed = if renderer.pressed_keys.contains("control") { 0.42 } else { 0.22 };
+        let forward_x = renderer.camera_yaw.sin();
+        let forward_z = -renderer.camera_yaw.cos();
+        let right_x = renderer.camera_yaw.cos();
+        let right_z = renderer.camera_yaw.sin();
+        renderer.camera_position[0] +=
+            (forward_x * forward + right_x * strafe) / length * speed;
+        renderer.camera_position[2] +=
+            (forward_z * forward + right_z * strafe) / length * speed;
+        renderer.camera_position[1] += vertical * speed;
+
         let canvas: HtmlCanvasElement = renderer.gl.canvas()
             .ok_or_else(|| JsValue::from_str("WebGL canvas is unavailable"))?
             .dyn_into()
@@ -181,12 +230,19 @@ pub fn draw_frame() -> Result<(), JsValue> {
         let width = canvas.width().max(1) as f32;
         let height = canvas.height().max(1) as f32;
 
-        let eye = [
-            renderer.camera_angle.sin() * 38.0,
-            22.0,
-            renderer.camera_angle.cos() * 38.0,
+        let horizontal = renderer.camera_pitch.cos();
+        let direction = [
+            renderer.camera_yaw.sin() * horizontal,
+            renderer.camera_pitch.sin(),
+            -renderer.camera_yaw.cos() * horizontal,
         ];
-        let view = look_at(eye, [0.0, 3.0, 0.0], [0.0, 1.0, 0.0]);
+        let eye = renderer.camera_position;
+        let target = [
+            eye[0] + direction[0],
+            eye[1] + direction[1],
+            eye[2] + direction[2],
+        ];
+        let view = look_at(eye, target, [0.0, 1.0, 0.0]);
         let projection = perspective(55.0_f32.to_radians(), width / height, 0.1, 100.0);
         let view_projection = multiply(projection, view);
 
