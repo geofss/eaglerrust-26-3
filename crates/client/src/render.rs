@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
-use crate::world::{BlockPosition, BlockStateId, LocalBlockPosition, SectionPosition, World};
+use crate::world::{BlockPosition, BlockStateId, SectionPosition, TerrainGenerator, World};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
     WebGlShader, WebGlUniformLocation,
@@ -182,11 +182,11 @@ pub fn draw_frame() -> Result<(), JsValue> {
         let height = canvas.height().max(1) as f32;
 
         let eye = [
-            renderer.camera_angle.sin() * 5.8,
-            3.8,
-            renderer.camera_angle.cos() * 5.8,
+            renderer.camera_angle.sin() * 18.0,
+            11.0,
+            renderer.camera_angle.cos() * 18.0,
         ];
-        let view = look_at(eye, [0.0, 1.0, 0.0], [0.0, 1.0, 0.0]);
+        let view = look_at(eye, [0.0, 3.0, 0.0], [0.0, 1.0, 0.0]);
         let projection = perspective(55.0_f32.to_radians(), width / height, 0.1, 100.0);
         let view_projection = multiply(projection, view);
 
@@ -253,19 +253,8 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 /// Build a sample section using the same dense block storage used by the world model.
 fn build_terrain_mesh() -> Vec<f32> {
     let mut world = World::new();
-    const HEIGHTS: [[i32; 3]; 3] = [[1, 2, 1], [2, 3, 2], [1, 2, 1]];
-
-    for x in 0..3 {
-        for z in 0..3 {
-            for y in 0..HEIGHTS[x][z] {
-                world.set_block(
-                    BlockPosition::new(x as i32, y, z as i32),
-                    BlockStateId(1),
-                );
-            }
-        }
-    }
-
+    let generator = TerrainGenerator::new(0xEAG1_2026, 5, 3);
+    generator.generate_region(&mut world, 0, 0, 16, 16);
     build_world_section_mesh(&world, SectionPosition::new(0, 0, 0))
 }
 
@@ -287,11 +276,11 @@ fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<
                 }
 
                 // Keep the prototype sample centred around the camera.
-                let x0 = world_pos.x as f32 - 1.5;
+                let x0 = world_pos.x as f32 - 8.0;
                 let x1 = x0 + 1.0;
                 let y0 = world_pos.y as f32;
                 let y1 = y0 + 1.0;
-                let z0 = world_pos.z as f32 - 1.5;
+                let z0 = world_pos.z as f32 - 8.0;
                 let z1 = z0 + 1.0;
 
                 let top = [0.28, 0.68, 0.22];
