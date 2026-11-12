@@ -28,7 +28,7 @@ Serve the `web/` directory over HTTP; opening `index.html` directly with `file:/
 
 ## Massive Game Update — world generation and navigation
 
-The renderer uses a Rust-owned free-fly camera instead of an automatic orbit. WASD moves horizontally, Space and Shift move vertically, Control moves faster, and pointer dragging rotates the view. Desktop mouse input requests pointer lock; touch input uses pointer dragging. The generated landscape now spans 48×48 blocks and includes height detail, water, sand, logs, and leaves. This remains an early prototype: collision, gravity, grounded jumping, block interaction, and player animation are still future work.
+The renderer uses a Rust-owned free-fly camera instead of an automatic orbit. WASD moves horizontally, Space and Shift move vertically, Control moves faster, and pointer dragging rotates the view. Desktop mouse input requests pointer lock; touch input uses pointer dragging, with on-screen movement, vertical movement, and speed controls on mobile-sized or touch-first screens. The generated landscape now spans 48×48 blocks and includes height detail, water, sand, logs, and leaves. This remains an early prototype: collision, gravity, grounded jumping, block interaction, and player animation are still future work.
 
 ## Next milestones
 
