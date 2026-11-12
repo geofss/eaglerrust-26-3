@@ -1,7 +1,7 @@
 //! Chunk-column streaming policy for the local prototype world.
 //! The 16x16 column format is an internal representation, not the 26.3 packet format.
 use std::collections::HashSet;
-use crate::world::{ChunkPosition, SectionPosition, TerrainGenerator, World};
+use crate::world::{ChunkPosition, TerrainGenerator, World};
 
 #[derive(Debug, Clone)]
 pub struct ChunkManager {
