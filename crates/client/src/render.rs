@@ -20,7 +20,10 @@ struct Renderer {
     gl: Gl,
     program: WebGlProgram,
     vertex_buffer: WebGlBuffer,
+    outline_buffer: WebGlBuffer,
     matrix_location: WebGlUniformLocation,
+    position_attribute: u32,
+    color_attribute: u32,
     vertex_count: i32,
     world: World,
     player: Player,
@@ -94,6 +97,9 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
     let vertex_buffer = gl
         .create_buffer()
         .ok_or_else(|| JsValue::from_str("Could not allocate the terrain buffer"))?;
+    let outline_buffer = gl
+        .create_buffer()
+        .ok_or_else(|| JsValue::from_str("Could not allocate the block outline buffer"))?;
     let matrix_location = gl
         .get_uniform_location(&program, "u_view_projection")
         .ok_or_else(|| JsValue::from_str("Camera matrix uniform is missing"))?;
@@ -141,7 +147,10 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             gl,
             program,
             vertex_buffer,
+            outline_buffer,
             matrix_location,
+            position_attribute: position as u32,
+            color_attribute: color as u32,
             vertex_count,
             world,
             player,
@@ -270,6 +279,9 @@ pub fn draw_frame() -> Result<(), JsValue> {
 
         renderer.gl.use_program(Some(&renderer.program));
         renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&renderer.vertex_buffer));
+        let stride = (6 * std::mem::size_of::<f32>()) as i32;
+        renderer.gl.vertex_attrib_pointer_with_i32(renderer.position_attribute, 3, Gl::FLOAT, false, stride, 0);
+        renderer.gl.vertex_attrib_pointer_with_i32(renderer.color_attribute, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
         renderer.gl.uniform_matrix4fv_with_f32_array(
             Some(&renderer.matrix_location),
             false,
@@ -277,6 +289,16 @@ pub fn draw_frame() -> Result<(), JsValue> {
         );
         renderer.gl.clear(Gl::COLOR_BUFFER_BIT | Gl::DEPTH_BUFFER_BIT);
         renderer.gl.draw_arrays(Gl::TRIANGLES, 0, renderer.vertex_count);
+
+        if let Some(hit) = current_target(renderer) {
+            let outline = block_outline_mesh(hit.position);
+            let outline_data = Float32Array::from(outline.as_slice());
+            renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&renderer.outline_buffer));
+            renderer.gl.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &outline_data, Gl::DYNAMIC_DRAW);
+            renderer.gl.vertex_attrib_pointer_with_i32(renderer.position_attribute, 3, Gl::FLOAT, false, stride, 0);
+            renderer.gl.vertex_attrib_pointer_with_i32(renderer.color_attribute, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
+            renderer.gl.draw_arrays(Gl::LINES, 0, (outline.len() / 6) as i32);
+        }
         Ok(())
     })
 }
@@ -327,6 +349,32 @@ fn current_target(renderer: &Renderer) -> Option<crate::raycast::BlockHit> {
         renderer.player.position.z,
     ];
     target_block(&renderer.world, eye, direction, 5.0)
+}
+
+fn block_outline_mesh(position: BlockPosition) -> Vec<f32> {
+    let x = position.x as f32 - 0.003;
+    let y = position.y as f32 - 0.003;
+    let z = position.z as f32 - 0.003;
+    let x1 = x + 1.006;
+    let y1 = y + 1.006;
+    let z1 = z + 1.006;
+    let corners = [
+        [x, y, z], [x1, y, z], [x, y1, z], [x1, y1, z],
+        [x, y, z1], [x1, y, z1], [x, y1, z1], [x1, y1, z1],
+    ];
+    let edges = [
+        (0, 1), (1, 3), (3, 2), (2, 0),
+        (4, 5), (5, 7), (7, 6), (6, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
+    ];
+    let mut vertices = Vec::with_capacity(24 * 6);
+    for (a, b) in edges {
+        for point in [corners[a], corners[b]] {
+            vertices.extend_from_slice(&point);
+            vertices.extend_from_slice(&[1.0, 1.0, 1.0]);
+        }
+    }
+    vertices
 }
 
 fn upload_world_mesh(renderer: &mut Renderer) {
