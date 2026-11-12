@@ -258,7 +258,7 @@ impl TerrainGenerator {
                 let x = origin_x + dx as i32;
                 let z = origin_z + dz as i32;
                 let height = self.height_at(x, z).max(1);
-                let surface = if height <= SEA_LEVEL + 1 { SAND } else { GRASS_BLOCK };
+                let surface = if height <= SEA_LEVEL { SAND } else { GRASS_BLOCK };
 
                 for y in 0..=height {
                     let state = if y == height {
