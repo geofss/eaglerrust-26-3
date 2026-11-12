@@ -6,6 +6,7 @@
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
+use crate::chunk::ChunkManager;
 use crate::input::InputFrame;
 use crate::interaction::{break_block, place_block, target_block};
 use crate::physics::Vec3;
@@ -428,6 +429,13 @@ fn update_dirty_section_meshes(renderer: &mut Renderer) -> bool {
             buffer,
             vertex_count: (vertices.len() / 6) as i32,
         });
+    }
+    let unloaded: Vec<_> = renderer.section_meshes.keys().copied()
+        .filter(|section| !renderer.world.is_section_loaded(*section)).collect();
+    for section in unloaded {
+        if let Some(mesh) = renderer.section_meshes.remove(&section) {
+            renderer.gl.delete_buffer(Some(&mesh.buffer));
+        }
     }
     true
 }
