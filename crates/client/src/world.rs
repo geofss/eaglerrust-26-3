@@ -1,10 +1,11 @@
-//! Portable world primitives and a canonical in-memory chunk-section layout.
+//! Portable world primitives and sparse in-memory chunk-section storage.
 //!
 //! This layout is an internal Rust representation, not a claim about the
 //! 26.3 wire format. Protocol decoding must translate into these types.
 
 pub const SECTION_EDGE: i32 = 16;
 pub const SECTION_VOLUME: usize = 16 * 16 * 16;
+pub const AIR: BlockStateId = BlockStateId(0);
 
 /// Stable identifier for a registered block state. Zero is reserved as air
 /// in this initial internal model; the 26.3 registry mapping remains pending.
@@ -110,9 +111,77 @@ impl ChunkSection {
     pub fn as_slice(&self) -> &[BlockStateId] { &self.blocks }
 }
 
+/// Sparse world storage indexed by section coordinates.
+/// Missing sections read as air; this is an internal model, not the 26.3 wire format.
+#[derive(Debug, Default, Clone)]
+pub struct World {
+    sections: std::collections::HashMap<SectionPosition, ChunkSection>,
+}
+
+impl World {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Read a block in world coordinates. Unloaded sections are treated as air.
+    pub fn get_block(&self, position: BlockPosition) -> BlockStateId {
+        self.sections
+            .get(&position.section())
+            .map(|section| section.get(position.local()))
+            .unwrap_or(AIR)
+    }
+
+    /// Write a block in world coordinates, allocating its section when needed.
+    pub fn set_block(&mut self, position: BlockPosition, state: BlockStateId) {
+        self.sections
+            .entry(position.section())
+            .or_default()
+            .set(position.local(), state);
+    }
+
+    pub fn section_count(&self) -> usize {
+        self.sections.len()
+    }
+
+    pub fn get_section(&self, position: SectionPosition) -> Option<&ChunkSection> {
+        self.sections.get(&position)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn world_reads_missing_sections_as_air() {
+        let world = World::new();
+        assert_eq!(world.get_block(BlockPosition::new(40, 8, -20)), AIR);
+        assert_eq!(world.section_count(), 0);
+    }
+
+    #[test]
+    fn world_stores_blocks_across_section_boundaries() {
+        let mut world = World::new();
+        let first = BlockPosition::new(15, 15, 15);
+        let second = BlockPosition::new(16, 16, 16);
+
+        world.set_block(first, BlockStateId(3));
+        world.set_block(second, BlockStateId(7));
+
+        assert_eq!(world.get_block(first), BlockStateId(3));
+        assert_eq!(world.get_block(second), BlockStateId(7));
+        assert_eq!(world.section_count(), 2);
+    }
+
+    #[test]
+    fn world_storage_handles_negative_world_positions() {
+        let mut world = World::new();
+        let position = BlockPosition::new(-1, -1, -17);
+        world.set_block(position, BlockStateId(9));
+
+        assert_eq!(world.get_block(position), BlockStateId(9));
+        assert_eq!(world.section_count(), 1);
+    }
 
     #[test]
     fn negative_coordinates_use_euclidean_chunk_math() {
