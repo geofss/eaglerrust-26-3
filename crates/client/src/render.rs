@@ -406,7 +406,7 @@ fn normalize(vector: [f32; 3]) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_terrain_mesh, build_world_section_mesh};
+    use super::{block_palette, build_terrain_mesh, build_world_section_mesh};
     use crate::world::{BlockPosition, BlockStateId, SectionPosition, World};
 
     #[test]
@@ -429,6 +429,16 @@ mod tests {
         // Each isolated cube has six faces; the shared face is culled on both sides.
         assert_eq!(left.len(), 5 * 6 * 6);
         assert_eq!(right.len(), 5 * 6 * 6);
+    }
+
+    #[test]
+    fn block_states_use_distinct_material_palettes() {
+        let grass = block_palette(BlockStateId(1));
+        let dirt = block_palette(BlockStateId(2));
+        let stone = block_palette(BlockStateId(3));
+        assert_ne!(grass.0, dirt.0);
+        assert_ne!(dirt.0, stone.0);
+        assert!(grass.0.iter().all(|channel| (0.0..=1.0).contains(channel)));
     }
 
     #[test]
