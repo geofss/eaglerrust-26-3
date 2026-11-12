@@ -1,6 +1,6 @@
 //! Deterministic AABB geometry and axis-separated voxel collision.
-use crate::block::BlockRegistry;
-use crate::world::{BlockPosition, World, WATER};
+use crate::block::is_solid_state;
+use crate::world::{BlockPosition, World};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Vec3 { pub x: f64, pub y: f64, pub z: f64 }
@@ -41,10 +41,10 @@ fn clip_axis(world:&World,bounds:Aabb,delta:f64,axis:usize)->f64 {
         (swept_min[1].floor() as i32)..=((swept_max[1]-eps).floor() as i32),
         (swept_min[2].floor() as i32)..=((swept_max[2]-eps).floor() as i32),
     ];
-    let registry=BlockRegistry::prototype(); let mut allowed=delta;
+    let mut allowed=delta;
     for x in ranges[0].clone(){for y in ranges[1].clone(){for z in ranges[2].clone(){
         let state=world.get_block(BlockPosition::new(x,y,z));
-        if state==WATER || !registry.is_solid(state){continue;}
+        if !is_solid_state(state){continue;}
         let block_min=[x as f64,y as f64,z as f64]; let block_max=[x as f64+1.0,y as f64+1.0,z as f64+1.0];
         let a=(axis+1)%3;let b=(axis+2)%3;
         if maxs[a]<=block_min[a]||mins[a]>=block_max[a]||maxs[b]<=block_min[b]||mins[b]>=block_max[b]{continue;}
