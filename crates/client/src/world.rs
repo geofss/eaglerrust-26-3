@@ -203,6 +203,17 @@ impl World {
         self.sections.len()
     }
 
+    /// List loaded section coordinates in stable order for deterministic iteration.
+    pub fn loaded_sections(&self) -> Vec<SectionPosition> {
+        let mut positions: Vec<_> = self.sections.keys().copied().collect();
+        positions.sort_by_key(|position| (position.x, position.y, position.z));
+        positions
+    }
+
+    pub fn is_section_loaded(&self, position: SectionPosition) -> bool {
+        self.sections.contains_key(&position)
+    }
+
     pub fn get_section(&self, position: SectionPosition) -> Option<&ChunkSection> {
         self.sections.get(&position)
     }
@@ -231,7 +242,24 @@ mod tests {
         assert_eq!(dirty, vec![SectionPosition::new(0, 0, 0), SectionPosition::new(1, 0, 0)]);
 
         world.set_block(BlockPosition::new(15, 4, 4), BlockStateId(2));
-        assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(0, 0, 0)]);
+        assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(0, 0, 0), SectionPosition::new(1, 0, 0)]);
+    }
+
+    #[test]
+    fn loaded_sections_are_returned_in_stable_order() {
+        let mut world = World::new();
+        world.set_block(BlockPosition::new(32, 0, 0), BlockStateId(1));
+        world.set_block(BlockPosition::new(-16, 0, 0), BlockStateId(1));
+        world.set_block(BlockPosition::new(0, 16, 0), BlockStateId(1));
+
+        let expected = vec![
+            SectionPosition::new(-1, 0, 0),
+            SectionPosition::new(0, 1, 0),
+            SectionPosition::new(2, 0, 0),
+        ];
+        assert_eq!(world.loaded_sections(), expected);
+        assert!(world.is_section_loaded(SectionPosition::new(-1, 0, 0)));
+        assert!(!world.is_section_loaded(SectionPosition::new(99, 0, 0)));
     }
 
     #[test]
