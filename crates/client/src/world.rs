@@ -224,6 +224,11 @@ impl World {
 pub const GRASS_BLOCK: BlockStateId = BlockStateId(1);
 pub const DIRT: BlockStateId = BlockStateId(2);
 pub const STONE: BlockStateId = BlockStateId(3);
+pub const WATER: BlockStateId = BlockStateId(4);
+pub const SAND: BlockStateId = BlockStateId(5);
+pub const LOG: BlockStateId = BlockStateId(6);
+pub const LEAVES: BlockStateId = BlockStateId(7);
+pub const SEA_LEVEL: i32 = 5;
 
 /// Deterministic heightmap generator for a bounded prototype region.
 #[derive(Debug, Clone, Copy)]
@@ -238,7 +243,7 @@ impl TerrainGenerator {
         Self { seed, base_height, amplitude }
     }
 
-    /// Generate a square patch into the world and return the number of blocks written.
+    /// Generate terrain, shorelines, shallow water, and deterministic tree features.
     pub fn generate_region(
         &self,
         world: &mut World,
@@ -253,9 +258,11 @@ impl TerrainGenerator {
                 let x = origin_x + dx as i32;
                 let z = origin_z + dz as i32;
                 let height = self.height_at(x, z).max(1);
+                let surface = if height <= SEA_LEVEL + 1 { SAND } else { GRASS_BLOCK };
+
                 for y in 0..=height {
                     let state = if y == height {
-                        GRASS_BLOCK
+                        surface
                     } else if y >= height - 2 {
                         DIRT
                     } else {
@@ -265,9 +272,59 @@ impl TerrainGenerator {
                         written += 1;
                     }
                 }
+
+                if height < SEA_LEVEL {
+                    for y in (height + 1)..=SEA_LEVEL {
+                        if world.set_block(BlockPosition::new(x, y, z), WATER) {
+                            written += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Features are placed after terrain so their bases never get overwritten.
+        for dz in 2..depth.saturating_sub(2) {
+            for dx in 2..width.saturating_sub(2) {
+                let x = origin_x + dx as i32;
+                let z = origin_z + dz as i32;
+                let ground = self.height_at(x, z).max(1);
+                if ground < SEA_LEVEL + 1 || self.feature_hash(x, z) % 47 != 0 {
+                    continue;
+                }
+
+                for dz_leaf in -2_i32..=2 {
+                    for dx_leaf in -2_i32..=2 {
+                        for dy_leaf in 3_i32..=5 {
+                            let radius = dx_leaf.abs() + dz_leaf.abs() + (dy_leaf - 4).abs();
+                            if radius <= 4 {
+                                let position = BlockPosition::new(x + dx_leaf, ground + dy_leaf, z + dz_leaf);
+                                if world.set_block(position, LEAVES) {
+                                    written += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for dy in 1..=4 {
+                    if world.set_block(BlockPosition::new(x, ground + dy, z), LOG) {
+                        written += 1;
+                    }
+                }
             }
         }
         written
+    }
+
+    fn feature_hash(&self, x: i32, z: i32) -> u32 {
+        let mut hash = self.seed
+            ^ (x as u32).wrapping_mul(0x9E37_79B9)
+            ^ (z as u32).wrapping_mul(0x85EB_CA6B)
+            ^ 0xA511_E9B3;
+        hash ^= hash >> 16;
+        hash = hash.wrapping_mul(0x7FEB_352D);
+        hash ^ (hash >> 15)
     }
 
     /// Smooth deterministic value noise sampled on an eight-block grid.
@@ -284,7 +341,9 @@ impl TerrainGenerator {
         let d = self.lattice_height(cell_x + 1, cell_z + 1) as f32;
         let north = a + (b - a) * smooth_x;
         let south = c + (d - c) * smooth_x;
-        (north + (south - north) * smooth_z).round() as i32
+        let broad = (north + (south - north) * smooth_z).round() as i32;
+        let detail = (self.feature_hash(x, z) % 3) as i32 - 1;
+        broad + detail
     }
 
     fn lattice_height(&self, x: i32, z: i32) -> i32 {
@@ -302,6 +361,52 @@ impl TerrainGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generated_region_contains_water_and_sand_shorelines() {
+        let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
+        let mut world = World::new();
+        generator.generate_region(&mut world, -24, -24, 48, 48);
+
+        let mut found_water = false;
+        let mut found_sand = false;
+        for z in -24..24 {
+            for x in -24..24 {
+                for y in 0..=SEA_LEVEL {
+                    let state = world.get_block(BlockPosition::new(x, y, z));
+                    found_water |= state == WATER;
+                    found_sand |= state == SAND;
+                }
+            }
+        }
+        assert!(found_water);
+        assert!(found_sand);
+    }
+
+    #[test]
+    fn generated_region_places_deterministic_trees() {
+        let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
+        let mut first = World::new();
+        let mut second = World::new();
+        generator.generate_region(&mut first, -24, -24, 48, 48);
+        generator.generate_region(&mut second, -24, -24, 48, 48);
+
+        let mut logs = 0;
+        let mut leaves = 0;
+        for y in 0..16 {
+            for z in -24..24 {
+                for x in -24..24 {
+                    let position = BlockPosition::new(x, y, z);
+                    let state = first.get_block(position);
+                    logs += usize::from(state == LOG);
+                    leaves += usize::from(state == LEAVES);
+                    assert_eq!(state, second.get_block(position));
+                }
+            }
+        }
+        assert!(logs > 0);
+        assert!(leaves > 0);
+    }
 
     #[test]
     fn block_edits_mark_the_section_dirty_only_when_changed() {
@@ -391,7 +496,7 @@ mod tests {
 
     #[test]
     fn terrain_generation_supports_negative_world_coordinates() {
-        let generator = TerrainGenerator::new(99, 4, 1);
+        let generator = TerrainGenerator::new(99, 7, 1);
         let mut world = World::new();
         generator.generate_region(&mut world, -2, -2, 2, 2);
         let height = generator.height_at(-1, -1).max(1);
