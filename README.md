@@ -29,7 +29,7 @@ Serve the `web/` directory over HTTP; opening `index.html` directly with `file:/
 ## Next milestones
 
 1. Verify the voxel renderer on desktop and mobile browsers.
-2. Add chunk lifecycle management and update/remesh scheduling when world blocks change.
+2. Connect dirty-section tracking to GPU mesh uploads and implement chunk loading/unloading policy.
 3. Add block textures, atlas sampling, lighting, and fog.
 4. Add player camera controls and collision-aware movement.
 5. Port the remaining client systems and validate 26.3 compatibility.
