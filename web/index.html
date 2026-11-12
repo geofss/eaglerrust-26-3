@@ -84,6 +84,8 @@
     .dot { width: 7px; height: 7px; border-radius: 50%; background: #38516e; }
     .screen-head span:last-child { margin-left: auto; }
 
+    .viewport-wrap { position: relative; }
+
     #game-canvas {
       display: block;
       touch-action: none;
@@ -93,6 +95,64 @@
       aspect-ratio: 16 / 9;
       background: #0a1423;
       outline: none;
+    }
+
+    .mobile-controls {
+      display: none;
+      position: absolute;
+      inset: auto 12px 12px;
+      justify-content: space-between;
+      align-items: end;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .mobile-pad, .mobile-actions {
+      display: grid;
+      gap: 7px;
+      pointer-events: auto;
+    }
+
+    .mobile-pad {
+      grid-template-columns: repeat(3, 44px);
+      grid-template-rows: repeat(2, 44px);
+    }
+
+    .mobile-actions {
+      grid-template-columns: repeat(2, 44px);
+      align-items: end;
+    }
+
+    .mobile-controls button {
+      min-width: 44px;
+      min-height: 44px;
+      border: 1px solid rgba(185, 215, 245, .48);
+      border-radius: 13px;
+      background: rgba(12, 27, 45, .76);
+      color: #edf6ff;
+      font: 700 1rem ui-sans-serif, system-ui, sans-serif;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+      touch-action: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .mobile-controls button:active,
+    .mobile-controls button.is-pressed {
+      background: rgba(58, 117, 170, .9);
+      border-color: #a8d7ff;
+    }
+
+    .mobile-pad [data-key="w"] { grid-column: 2; grid-row: 1; }
+    .mobile-pad [data-key="a"] { grid-column: 1; grid-row: 2; }
+    .mobile-pad [data-key="s"] { grid-column: 2; grid-row: 2; }
+    .mobile-pad [data-key="d"] { grid-column: 3; grid-row: 2; }
+
+    .mobile-actions button { font-size: .72rem; }
+
+    @media (hover: none) and (pointer: coarse), (max-width: 760px) {
+      .mobile-controls { display: flex; }
+      #game-canvas { min-height: 300px; }
     }
 
     .bottom {
@@ -137,10 +197,25 @@
         <span>renderer.viewport</span>
         <span>WEBGL1 / VOXELS</span>
       </div>
-      <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
+      <div class="viewport-wrap">
+        <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
+        <div class="mobile-controls" aria-label="Touch movement controls">
+          <div class="mobile-pad">
+            <button type="button" data-key="w" aria-label="Move forward">▲</button>
+            <button type="button" data-key="a" aria-label="Move left">◀</button>
+            <button type="button" data-key="s" aria-label="Move backward">▼</button>
+            <button type="button" data-key="d" aria-label="Move right">▶</button>
+          </div>
+          <div class="mobile-actions">
+            <button type="button" data-key=" " aria-label="Move up">UP</button>
+            <button type="button" data-key="shift" aria-label="Move down">DOWN</button>
+            <button type="button" data-key="control" aria-label="Move faster">FAST</button>
+          </div>
+        </div>
+      </div>
       <div class="bottom">
         <div id="status" role="status">Starting Rust runtime…</div>
-        <div class="hint">WASD move · Space/Shift rise & descend · drag to look</div>
+        <div class="hint">WASD or touch pad · drag to look · UP/DOWN to fly</div>
       </div>
     </section>
   </main>
@@ -182,6 +257,30 @@
       });
       window.addEventListener("blur", () => {
         for (const key of movementKeys) set_key(key, false);
+        document.querySelectorAll(".mobile-controls button.is-pressed").forEach((button) => {
+          button.classList.remove("is-pressed");
+        });
+      });
+
+      // Touch buttons mirror keyboard input and keep each held key in Rust.
+      document.querySelectorAll(".mobile-controls button[data-key]").forEach((button) => {
+        const key = button.dataset.key;
+        const press = (event) => {
+          event.preventDefault();
+          button.setPointerCapture?.(event.pointerId);
+          button.classList.add("is-pressed");
+          set_key(key, true);
+        };
+        const release = (event) => {
+          event.preventDefault();
+          button.classList.remove("is-pressed");
+          set_key(key, false);
+        };
+        button.addEventListener("pointerdown", press);
+        button.addEventListener("pointerup", release);
+        button.addEventListener("pointercancel", release);
+        button.addEventListener("lostpointercapture", release);
+        button.addEventListener("contextmenu", (event) => event.preventDefault());
       });
 
       let activePointer = null;
