@@ -17,6 +17,12 @@ pub struct BlockDefinition {
 #[derive(Debug, Clone)]
 pub struct BlockRegistry { definitions: Vec<BlockDefinition> }
 
+/// Fast prototype collision lookup used by the physics hot path.
+/// Unknown IDs remain solid until the official 26.3 registry is mapped.
+pub fn is_solid_state(id: BlockStateId) -> bool {
+    !matches!(id, AIR | WATER)
+}
+
 impl BlockRegistry {
     /// Prototype registry only; these numeric IDs are not official 26.3 IDs.
     pub fn prototype() -> Self {
