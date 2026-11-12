@@ -228,7 +228,8 @@ impl World {
     pub fn ensure_section(&mut self, position: SectionPosition) {
         self.sections.entry(position).or_default();
     }
-\n    pub fn section_count(&self) -> usize {
+
+    pub fn section_count(&self) -> usize {
         self.sections.len()
     }
 
