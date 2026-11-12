@@ -178,10 +178,12 @@ mod tests {
     #[test]
     fn rejects_bad_signature_and_truncated_header() {
         assert!(matches!(decode_world(b"ER"), Err(SaveError::Truncated)));
-        let mut bytes = vec![0; 12];
-        assert!(matches!(decode_world(&bytes), Err(SaveError::InvalidMagic)));
-        bytes[..4].copy_from_slice(MAGIC);
-        assert_eq!(decode_world(&bytes).unwrap().section_count(), 0);
+        let mut invalid = encode_world(&World::new());
+        invalid[..4].copy_from_slice(b"NOPE");
+        assert!(matches!(decode_world(&invalid), Err(SaveError::InvalidMagic)));
+
+        let valid_empty = encode_world(&World::new());
+        assert_eq!(decode_world(&valid_empty).unwrap().section_count(), 0);
     }
 
     #[test]
