@@ -27,6 +27,8 @@ struct Renderer {
     camera_yaw: f32,
     camera_pitch: f32,
     pressed_keys: HashSet<String>,
+    last_tick_ms: f64,
+    tick_accumulator: f64,
 }
 
 thread_local! {
@@ -146,6 +148,8 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             camera_yaw: 0.0,
             camera_pitch: -0.34,
             pressed_keys: HashSet::new(),
+            last_tick_ms: js_sys::Date::now(),
+            tick_accumulator: 0.0,
         });
     });
 
@@ -228,7 +232,14 @@ pub fn draw_frame() -> Result<(), JsValue> {
             ..InputFrame::default()
         };
         renderer.player.yaw = f64::from(renderer.camera_yaw);
-        renderer.player.tick(&renderer.world, &input);
+        let now_ms = js_sys::Date::now();
+        let elapsed = ((now_ms - renderer.last_tick_ms) / 1000.0).clamp(0.0, 0.25);
+        renderer.last_tick_ms = now_ms;
+        renderer.tick_accumulator += elapsed;
+        while renderer.tick_accumulator >= 0.05 {
+            renderer.player.tick(&renderer.world, &input);
+            renderer.tick_accumulator -= 0.05;
+        }
 
         let canvas: HtmlCanvasElement = renderer.gl.canvas()
             .ok_or_else(|| JsValue::from_str("WebGL canvas is unavailable"))?
