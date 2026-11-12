@@ -398,8 +398,8 @@ mod tests {
                 for x in -24..24 {
                     let position = BlockPosition::new(x, y, z);
                     let state = first.get_block(position);
-                    logs += usize::from(state == LOG);
-                    leaves += usize::from(state == LEAVES);
+                    if state == LOG { logs += 1; }
+                    if state == LEAVES { leaves += 1; }
                     assert_eq!(state, second.get_block(position));
                 }
             }
