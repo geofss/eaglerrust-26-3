@@ -84,14 +84,7 @@ impl ChunkManager {
         let mut obsolete: Vec<_> = self.loaded.difference(&desired).copied().collect();
         obsolete.sort_by_key(|column| (column.z, column.x));
         for column in obsolete.into_iter().take(unload_budget) {
-            let sections: Vec<_> = world
-                .loaded_sections()
-                .into_iter()
-                .filter(|section| section.x == column.x && section.z == column.z)
-                .collect();
-            for section in sections {
-                world.remove_section(section);
-            }
+            world.remove_column(column.x, column.z);
             self.loaded.remove(&column);
             result.unloaded_columns += 1;
         }
