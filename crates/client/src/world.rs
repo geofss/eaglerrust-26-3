@@ -377,6 +377,19 @@ mod tests {
     }
 
     #[test]
+    fn thirty_two_block_region_spans_four_horizontal_sections() {
+        let generator = TerrainGenerator::new(2026, 5, 2);
+        let mut world = World::new();
+        generator.generate_region(&mut world, 0, 0, 32, 32);
+
+        assert_eq!(world.section_count(), 4);
+        assert!(world.is_section_loaded(SectionPosition::new(0, 0, 0)));
+        assert!(world.is_section_loaded(SectionPosition::new(1, 0, 0)));
+        assert!(world.is_section_loaded(SectionPosition::new(0, 0, 1)));
+        assert!(world.is_section_loaded(SectionPosition::new(1, 0, 1)));
+    }
+
+    #[test]
     fn terrain_generation_supports_negative_world_coordinates() {
         let generator = TerrainGenerator::new(99, 4, 1);
         let mut world = World::new();
