@@ -5,7 +5,7 @@
 //! format stores one u8 palette index per voxel (4096 bytes per section).
 //! It is NOT the vanilla packed-long PalettedContainer format and must not be
 //! used for a 26.3 packet until that target format is verified.
-use crate::world::{BlockStateId, ChunkSection, LocalBlockPosition, SECTION_VOLUME};
+use crate::world::{BlockStateId, ChunkSection, LocalBlockPosition, SectionPosition, World, SECTION_VOLUME};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteDecodeError {
@@ -13,6 +13,21 @@ pub enum PaletteDecodeError {
     PaletteTooLarge,
     WrongVoxelCount { expected: usize, actual: usize },
     PaletteIndexOutOfRange { voxel: usize, index: u8, palette_len: usize },
+}
+
+/// Decode and atomically install one section into the internal world model.
+///
+/// This adapter remains specific to the supplied 26.1.2 reference gateway
+/// layout. It is not a production 26.3 network decoder.
+pub fn decode_reference_palette_section_into_world(
+    world: &mut World,
+    position: SectionPosition,
+    palette: &[BlockStateId],
+    voxel_indices: &[u8],
+) -> Result<(), PaletteDecodeError> {
+    let section = decode_reference_palette_section(palette, voxel_indices)?;
+    world.replace_section(position, section);
+    Ok(())
 }
 
 /// Decode the reference gateway's byte-per-voxel section representation.
@@ -91,6 +106,38 @@ mod tests {
             }),
             Err(PaletteDecodeError::PaletteIndexOutOfRange { voxel: 123, index: 1, palette_len: 1 })
         );
+    }
+
+    #[test]
+    fn decoded_reference_section_is_installed_and_marks_mesh_dirty() {
+        let mut world = World::new();
+        let position = SectionPosition::new(-1, 2, 3);
+        let palette = [BlockStateId(0), BlockStateId(77)];
+        let mut indices = vec![0; SECTION_VOLUME];
+        indices[LocalBlockPosition { x: 15, y: 4, z: 7 }.index()] = 1;
+
+        decode_reference_palette_section_into_world(
+            &mut world, position, &palette, &indices,
+        ).unwrap();
+
+        let world_position = crate::world::BlockPosition::new(-1, 36, 55);
+        assert_eq!(world.get_block(world_position), BlockStateId(77));
+        assert_eq!(world.take_dirty_sections(), vec![position]);
+    }
+
+    #[test]
+    fn invalid_reference_payload_does_not_mutate_world() {
+        let mut world = World::new();
+        let position = SectionPosition::new(0, 0, 0);
+        let palette = [BlockStateId(0)];
+        let mut indices = vec![0; SECTION_VOLUME];
+        indices[5] = 1;
+
+        assert!(decode_reference_palette_section_into_world(
+            &mut world, position, &palette, &indices,
+        ).is_err());
+        assert!(!world.is_section_loaded(position));
+        assert!(world.take_dirty_sections().is_empty());
     }
 
     #[test]

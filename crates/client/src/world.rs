@@ -229,6 +229,20 @@ impl World {
         self.sections.entry(position).or_default();
     }
 
+    /// Replace a complete section with decoded data and invalidate meshes that
+    /// depend on its boundary faces. Decoders must validate the payload before
+    /// calling this method so malformed input cannot partially mutate the world.
+    pub fn replace_section(&mut self, position: SectionPosition, section: ChunkSection) {
+        self.sections.insert(position, section);
+        self.dirty_sections.insert(position);
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x - 1, position.y, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x + 1, position.y, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y - 1, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y + 1, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y, position.z - 1));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y, position.z + 1));
+    }
+
     pub fn section_count(&self) -> usize {
         self.sections.len()
     }

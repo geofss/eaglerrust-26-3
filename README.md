@@ -47,3 +47,8 @@ The Rust player controller now drives movement and the camera follows the player
 5. Move chunk work to workers and add biomes, caves, entities, browser persistence, and audio.
 
 A compiled TeaVM/WASM artifact is not a substitute for the original Java source. The project will keep distinguishing implemented Rust systems from compatibility work that is still planned.
+
+
+## Reference section ingestion integration
+
+The 26.1.2 reference byte-per-voxel palette decoder now has an atomic adapter into the internal world store. A complete section is validated and decoded before it replaces the target section; malformed palette payloads leave the world untouched. Installing a section marks its own mesh and any already-loaded face-neighbour sections dirty so the renderer's existing dirty-section rebuild path can refresh exposed boundaries. This remains a reference-format integration test path, not a verified 26.3 server packet decoder.
