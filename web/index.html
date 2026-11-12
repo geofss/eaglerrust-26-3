@@ -139,7 +139,7 @@
       <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
       <div class="bottom">
         <div id="status" role="status">Starting Rust runtime…</div>
-        <div class="hint">Graphics bootstrap · Rust voxel mesh · orbit camera</div>
+        <div class="hint">WASD move · Space/Shift rise & descend · drag to look</div>
       </div>
     </section>
   </main>
@@ -149,7 +149,9 @@
       boot,
       start_renderer,
       resize_renderer,
-      draw_frame
+      draw_frame,
+      set_key,
+      look
     } from "./pkg/eaglerrust_client.js";
 
     const status = document.querySelector("#status");
@@ -159,7 +161,55 @@
       await init();
       boot();
       start_renderer(canvasId);
-      status.textContent = "Voxel scene ready · Rust mesh + orbit camera";
+      status.textContent = "World ready · WASD + pointer-look enabled";
+
+      const movementKeys = new Set(["w", "a", "s", "d", " ", "shift", "control"]);
+      window.addEventListener("keydown", (event) => {
+        const key = event.key.toLowerCase();
+        if (movementKeys.has(key)) {
+          event.preventDefault();
+          set_key(key, true);
+        }
+      });
+      window.addEventListener("keyup", (event) => {
+        const key = event.key.toLowerCase();
+        if (movementKeys.has(key)) {
+          event.preventDefault();
+          set_key(key, false);
+        }
+      });
+      window.addEventListener("blur", () => {
+        for (const key of movementKeys) set_key(key, false);
+      });
+
+      let activePointer = null;
+      let lastX = 0;
+      let lastY = 0;
+      canvas.addEventListener("pointerdown", (event) => {
+        activePointer = event.pointerId;
+        lastX = event.clientX;
+        lastY = event.clientY;
+        canvas.setPointerCapture(event.pointerId);
+        if (event.pointerType === "mouse" && canvas.requestPointerLock) {
+          canvas.requestPointerLock();
+        }
+      });
+      canvas.addEventListener("pointermove", (event) => {
+        if (event.pointerType === "mouse" && document.pointerLockElement === canvas) {
+          look(event.movementX, event.movementY);
+          return;
+        }
+        if (activePointer === event.pointerId) {
+          look(event.clientX - lastX, event.clientY - lastY);
+          lastX = event.clientX;
+          lastY = event.clientY;
+        }
+      });
+      const stopPointer = (event) => {
+        if (activePointer === event.pointerId) activePointer = null;
+      };
+      canvas.addEventListener("pointerup", stopPointer);
+      canvas.addEventListener("pointercancel", stopPointer);
 
       window.addEventListener("resize", () => {
         try {
