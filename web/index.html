@@ -86,6 +86,65 @@
 
     .viewport-wrap { position: relative; }
 
+    .hotbar {
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 5px;
+      max-width: calc(100% - 20px);
+      padding: 6px;
+      border: 1px solid rgba(185, 215, 245, .35);
+      border-radius: 12px;
+      background: rgba(7, 15, 26, .78);
+      backdrop-filter: blur(8px);
+      z-index: 3;
+    }
+
+    .hotbar-slot {
+      width: clamp(31px, 5vw, 48px);
+      min-width: 0;
+      height: 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      padding: 3px 1px;
+      border: 1px solid #34485f;
+      border-radius: 7px;
+      background: rgba(24, 39, 57, .92);
+      color: #c9d9e9;
+      font: 600 9px ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .hotbar-slot.selected { border: 2px solid #e8f4ff; background: #294b6d; }
+    .hotbar-slot .swatch { width: 13px; height: 13px; border: 1px solid rgba(255,255,255,.3); border-radius: 3px; }
+    .hotbar-slot span:last-child { font-variant-numeric: tabular-nums; }
+
+    .crosshair {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 16px;
+      height: 16px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 2;
+    }
+    .crosshair::before, .crosshair::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      background: rgba(255,255,255,.9);
+      box-shadow: 0 1px 2px #101820;
+      transform: translate(-50%, -50%);
+    }
+    .crosshair::before { width: 2px; height: 14px; }
+    .crosshair::after { width: 14px; height: 2px; }
+
     #game-canvas {
       display: block;
       touch-action: none;
@@ -199,6 +258,7 @@
       </div>
       <div class="viewport-wrap">
         <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
+        <div class="crosshair" aria-hidden="true"></div>
         <div id="hotbar" class="hotbar" aria-label="Prototype nine-slot hotbar"></div>
         <div class="mobile-controls" aria-label="Touch movement controls">
           <div class="mobile-pad">
@@ -208,9 +268,10 @@
             <button type="button" data-key="d" aria-label="Move right">▶</button>
           </div>
           <div class="mobile-actions">
-            <button type="button" data-key=" " aria-label="Move up">UP</button>
-            <button type="button" data-key="shift" aria-label="Move down">DOWN</button>
-            <button type="button" data-key="control" aria-label="Move faster">FAST</button>
+            <button type="button" data-key=" " aria-label="Jump">JUMP</button>
+            <button type="button" data-key="control" aria-label="Sprint">SPRINT</button>
+            <button type="button" data-action="break" aria-label="Break targeted block">BREAK</button>
+            <button type="button" data-action="place" aria-label="Place selected block">PLACE</button>
           </div>
         </div>
       </div>
@@ -232,7 +293,10 @@
       select_hotbar_slot,
       selected_hotbar_slot,
       hotbar_item,
-      hotbar_count
+      hotbar_count,
+      break_target,
+      place_target,
+      target_block_state
     } from "./pkg/eaglerrust_client.js";
 
     const status = document.querySelector("#status");
@@ -243,7 +307,7 @@
       await init();
       boot();
       start_renderer(canvasId);
-      status.textContent = "World ready · browser hotbar connected";
+      status.textContent = "World ready · player, hotbar and block interaction connected";
 
       // The visible nine-slot HUD reads and updates the Rust Hotbar model.
       const hotbarRoot = document.getElementById("hotbar");
@@ -269,6 +333,34 @@
         });
       }
       refreshHotbar();
+
+      const performBreak = () => {
+        if (break_target()) {
+          status.textContent = "Block broken · world mesh refreshed";
+        } else {
+          status.textContent = "No breakable block in reach";
+        }
+      };
+      const performPlace = () => {
+        if (place_target()) {
+          refreshHotbar();
+          status.textContent = "Block placed · hotbar updated";
+        } else {
+          status.textContent = "Cannot place there · aim at a block and select a stack";
+        }
+      };
+      canvas.addEventListener("mousedown", (event) => {
+        if (event.button === 0) performBreak();
+        if (event.button === 2) performPlace();
+      });
+      canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+      document.querySelectorAll(".mobile-controls [data-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.action === "break") performBreak();
+          if (button.dataset.action === "place") performPlace();
+        });
+      });
+
       window.addEventListener("keydown", (event) => {
         if (/^[1-9]$/.test(event.key)) { select_hotbar_slot(Number(event.key) - 1); refreshHotbar(); }
       });
@@ -354,8 +446,13 @@
         }
       });
 
+      let statusFrame = 0;
       const frame = () => {
         draw_frame();
+        if (++statusFrame % 30 === 0) {
+          const target = target_block_state();
+          if (target) status.textContent = `Target block ID: ${target} · left-click break · right-click place`;
+        }
         requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
