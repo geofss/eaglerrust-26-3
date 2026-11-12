@@ -4,9 +4,9 @@ A Rust + WebAssembly client reimplementation project targeting modern browsers.
 
 ## Current status
 
-The browser shell boots a Rust-owned WebGL1 renderer. Rust stores block states in 16×16×16 chunk sections and has a sparse world store that reads and writes blocks by world coordinates, including negative coordinates and section boundaries. An internal deterministic heightmap generator now fills a 16×16 prototype region with placeholder grass, dirt, and stone states. The renderer builds exposed-face voxel geometry from that generated world data, omits shared internal faces, uploads the mesh to a GPU buffer, and renders it with a perspective camera that slowly orbits the scene.
+The browser shell boots a Rust-owned WebGL1 renderer. Rust stores block states in 16×16×16 chunk sections and has a sparse world store that reads and writes blocks by world coordinates, including negative coordinates and section boundaries. An internal deterministic heightmap generator now fills a 16×16 prototype region with placeholder grass, dirt, and stone states. The renderer uses temporary block-state material palettes with directional face shading. It generates a 32×32 terrain region, iterates all loaded sections, combines their exposed-face meshes, and uploads the result to a GPU buffer for perspective rendering.
 
-This is still a renderer prototype, not a playable Minecraft client. The displayed sample section is populated procedurally inside Rust; large-scale terrain generation, biome and cave systems, chunk streaming and lifecycle management, the real 26.3 block registry mapping, textures, player controls, world interaction, entities, and multiplayer are not implemented yet.
+This is still a renderer prototype, not a playable Minecraft client. The displayed sample section is populated procedurally inside Rust; large-scale terrain streaming, biome and cave systems, GPU mesh rebuilds after edits, the real 26.3 block registry mapping, texture atlases, player controls, world interaction, entities, and multiplayer are not implemented yet. The current palette colours are placeholders, not official Minecraft textures.
 
 ## Architecture
 
