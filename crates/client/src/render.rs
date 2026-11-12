@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
-use crate::world::{BlockStateId, ChunkSection, LocalBlockPosition};
+use crate::world::{BlockPosition, BlockStateId, ChunkSection, LocalBlockPosition, SectionPosition, World};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
     WebGlShader, WebGlUniformLocation,
@@ -252,41 +252,47 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 // Each vertex stores position (xyz) followed by a face colour (rgb).
 /// Build a sample section using the same dense block storage used by the world model.
 fn build_terrain_mesh() -> Vec<f32> {
-    let mut section = ChunkSection::new();
-    const HEIGHTS: [[u8; 3]; 3] = [[1, 2, 1], [2, 3, 2], [1, 2, 1]];
+    let mut world = World::new();
+    const HEIGHTS: [[i32; 3]; 3] = [[1, 2, 1], [2, 3, 2], [1, 2, 1]];
 
     for x in 0..3 {
         for z in 0..3 {
             for y in 0..HEIGHTS[x][z] {
-                section.set(
-                    LocalBlockPosition { x: x as u8, y, z: z as u8 },
+                world.set_block(
+                    BlockPosition::new(x as i32, y, z as i32),
                     BlockStateId(1),
                 );
             }
         }
     }
 
-    build_section_mesh(&section)
+    build_world_section_mesh(&world, SectionPosition::new(0, 0, 0))
 }
 
-/// Convert occupied cells into exposed-face geometry.
-/// Neighbour checks happen against block storage, so internal cube faces are omitted.
-fn build_section_mesh(section: &ChunkSection) -> Vec<f32> {
+/// Mesh one section while checking neighbouring blocks in the complete world.
+/// This suppresses shared faces even when the neighbour is in another section.
+fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<f32> {
     let mut vertices = Vec::new();
 
     for y in 0..16_u8 {
         for z in 0..16_u8 {
             for x in 0..16_u8 {
                 let local = LocalBlockPosition { x, y, z };
-                if section.get(local) == BlockStateId(0) {
+                let world_pos = BlockPosition::new(
+                    section_pos.x * 16 + i32::from(x),
+                    section_pos.y * 16 + i32::from(y),
+                    section_pos.z * 16 + i32::from(z),
+                );
+                if world.get_block(world_pos) == BlockStateId(0) {
                     continue;
                 }
 
-                let x0 = f32::from(x) - 1.5;
+                // Keep the prototype sample centred around the camera.
+                let x0 = world_pos.x as f32 - 1.5;
                 let x1 = x0 + 1.0;
-                let y0 = f32::from(y);
+                let y0 = world_pos.y as f32;
                 let y1 = y0 + 1.0;
-                let z0 = f32::from(z) - 1.5;
+                let z0 = world_pos.z as f32 - 1.5;
                 let z1 = z0 + 1.0;
 
                 let top = [0.28, 0.68, 0.22];
@@ -295,22 +301,22 @@ fn build_section_mesh(section: &ChunkSection) -> Vec<f32> {
                 let side_c = [0.54, 0.36, 0.20];
                 let bottom = [0.32, 0.22, 0.13];
 
-                if !section_is_solid(section, i16::from(x), i16::from(y) + 1, i16::from(z)) {
+                if !world_is_solid(world, world_pos.x, world_pos.y + 1, world_pos.z) {
                     quad(&mut vertices, [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], top);
                 }
-                if !section_is_solid(section, i16::from(x), i16::from(y) - 1, i16::from(z)) {
+                if !world_is_solid(world, world_pos.x, world_pos.y - 1, world_pos.z) {
                     quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y0,z0],[x0,y0,z0]], bottom);
                 }
-                if !section_is_solid(section, i16::from(x) - 1, i16::from(y), i16::from(z)) {
+                if !world_is_solid(world, world_pos.x - 1, world_pos.y, world_pos.z) {
                     quad(&mut vertices, [[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0]], side_a);
                 }
-                if !section_is_solid(section, i16::from(x) + 1, i16::from(y), i16::from(z)) {
+                if !world_is_solid(world, world_pos.x + 1, world_pos.y, world_pos.z) {
                     quad(&mut vertices, [[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1]], side_b);
                 }
-                if !section_is_solid(section, i16::from(x), i16::from(y), i16::from(z) - 1) {
+                if !world_is_solid(world, world_pos.x, world_pos.y, world_pos.z - 1) {
                     quad(&mut vertices, [[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0]], side_c);
                 }
-                if !section_is_solid(section, i16::from(x), i16::from(y), i16::from(z) + 1) {
+                if !world_is_solid(world, world_pos.x, world_pos.y, world_pos.z + 1) {
                     quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], side_a);
                 }
             }
@@ -320,16 +326,8 @@ fn build_section_mesh(section: &ChunkSection) -> Vec<f32> {
     vertices
 }
 
-fn section_is_solid(section: &ChunkSection, x: i16, y: i16, z: i16) -> bool {
-    if !(0..16).contains(&x) || !(0..16).contains(&y) || !(0..16).contains(&z) {
-        return false;
-    }
-
-    section.get(LocalBlockPosition {
-        x: x as u8,
-        y: y as u8,
-        z: z as u8,
-    }) != BlockStateId(0)
+fn world_is_solid(world: &World, x: i32, y: i32, z: i32) -> bool {
+    world.get_block(BlockPosition::new(x, y, z)) != BlockStateId(0)
 }
 
 fn quad(vertices: &mut Vec<f32>, corners: [[f32; 3]; 4], color: [f32; 3]) {
@@ -399,25 +397,8 @@ fn normalize(vector: [f32; 3]) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_section_mesh, build_terrain_mesh};
-    use crate::world::{BlockStateId, ChunkSection, LocalBlockPosition};
-
-    #[test]
-    fn one_block_emits_six_exposed_faces() {
-        let mut section = ChunkSection::new();
-        section.set(LocalBlockPosition { x: 4, y: 4, z: 4 }, BlockStateId(1));
-        let mesh = build_section_mesh(&section);
-        assert_eq!(mesh.len(), 6 * 6 * 6);
-    }
-
-    #[test]
-    fn adjacent_blocks_hide_their_shared_face() {
-        let mut section = ChunkSection::new();
-        section.set(LocalBlockPosition { x: 4, y: 4, z: 4 }, BlockStateId(1));
-        section.set(LocalBlockPosition { x: 5, y: 4, z: 4 }, BlockStateId(1));
-        let mesh = build_section_mesh(&section);
-        assert_eq!(mesh.len(), 10 * 6 * 6);
-    }
+    use super::{build_terrain_mesh, build_world_section_mesh};
+    use crate::world::{BlockPosition, BlockStateId, SectionPosition, World};
 
     #[test]
     fn voxel_mesh_has_complete_triangle_vertices() {
@@ -425,5 +406,26 @@ mod tests {
         assert!(!mesh.is_empty());
         assert_eq!(mesh.len() % 18, 0, "each triangle has three xyz+rgb vertices");
         assert!(mesh.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn mesher_hides_faces_across_section_boundaries() {
+        let mut world = World::new();
+        world.set_block(BlockPosition::new(15, 4, 4), BlockStateId(1));
+        world.set_block(BlockPosition::new(16, 4, 4), BlockStateId(1));
+
+        let left = build_world_section_mesh(&world, SectionPosition::new(0, 0, 0));
+        let right = build_world_section_mesh(&world, SectionPosition::new(1, 0, 0));
+
+        // Each isolated cube has six faces; the shared face is culled on both sides.
+        assert_eq!(left.len(), 5 * 6 * 6);
+        assert_eq!(right.len(), 5 * 6 * 6);
+    }
+
+    #[test]
+    fn empty_section_produces_no_geometry() {
+        let world = World::new();
+        let mesh = build_world_section_mesh(&world, SectionPosition::new(0, 0, 0));
+        assert!(mesh.is_empty());
     }
 }
