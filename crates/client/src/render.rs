@@ -645,13 +645,6 @@ fn world_is_solid(world: &World, x: i32, y: i32, z: i32) -> bool {
     world.get_block(BlockPosition::new(x, y, z)) != BlockStateId(0)
 }
 
-fn quad(vertices: &mut Vec<f32>, corners: [[f32; 3]; 4], color: [f32; 3]) {
-    for index in [0, 1, 2, 0, 2, 3] {
-        vertices.extend_from_slice(&corners[index]);
-        vertices.extend_from_slice(&color);
-    }
-}
-
 fn perspective(fov: f32, aspect: f32, near: f32, far: f32) -> [f32; 16] {
     let f = 1.0 / (fov * 0.5).tan();
     let range = 1.0 / (near - far);
