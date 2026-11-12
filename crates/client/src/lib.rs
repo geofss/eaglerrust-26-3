@@ -1,10 +1,15 @@
 use wasm_bindgen::prelude::*;
 
 pub mod app;
+pub mod block;
 pub mod audio;
 pub mod input;
+pub mod interaction;
+pub mod inventory;
 pub mod network;
 pub mod physics;
+pub mod player;
+pub mod raycast;
 pub mod render;
 pub mod storage;
 pub mod world;
