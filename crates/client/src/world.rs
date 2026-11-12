@@ -219,6 +219,86 @@ impl World {
     }
 }
 
+
+/// Placeholder block IDs until the 26.3 block-state registry is mapped.
+pub const GRASS_BLOCK: BlockStateId = BlockStateId(1);
+pub const DIRT: BlockStateId = BlockStateId(2);
+pub const STONE: BlockStateId = BlockStateId(3);
+
+/// Deterministic heightmap generator for a bounded prototype region.
+#[derive(Debug, Clone, Copy)]
+pub struct TerrainGenerator {
+    seed: u32,
+    base_height: i32,
+    amplitude: i32,
+}
+
+impl TerrainGenerator {
+    pub const fn new(seed: u32, base_height: i32, amplitude: i32) -> Self {
+        Self { seed, base_height, amplitude }
+    }
+
+    /// Generate a square patch into the world and return the number of blocks written.
+    pub fn generate_region(
+        &self,
+        world: &mut World,
+        origin_x: i32,
+        origin_z: i32,
+        width: u32,
+        depth: u32,
+    ) -> usize {
+        let mut written = 0;
+        for dz in 0..depth {
+            for dx in 0..width {
+                let x = origin_x + dx as i32;
+                let z = origin_z + dz as i32;
+                let height = self.height_at(x, z).max(1);
+                for y in 0..=height {
+                    let state = if y == height {
+                        GRASS_BLOCK
+                    } else if y >= height - 2 {
+                        DIRT
+                    } else {
+                        STONE
+                    };
+                    if world.set_block(BlockPosition::new(x, y, z), state) {
+                        written += 1;
+                    }
+                }
+            }
+        }
+        written
+    }
+
+    /// Smooth deterministic value noise sampled on an eight-block grid.
+    pub fn height_at(&self, x: i32, z: i32) -> i32 {
+        let cell_x = x.div_euclid(8);
+        let cell_z = z.div_euclid(8);
+        let local_x = x.rem_euclid(8) as f32 / 8.0;
+        let local_z = z.rem_euclid(8) as f32 / 8.0;
+        let smooth_x = local_x * local_x * (3.0 - 2.0 * local_x);
+        let smooth_z = local_z * local_z * (3.0 - 2.0 * local_z);
+        let a = self.lattice_height(cell_x, cell_z) as f32;
+        let b = self.lattice_height(cell_x + 1, cell_z) as f32;
+        let c = self.lattice_height(cell_x, cell_z + 1) as f32;
+        let d = self.lattice_height(cell_x + 1, cell_z + 1) as f32;
+        let north = a + (b - a) * smooth_x;
+        let south = c + (d - c) * smooth_x;
+        (north + (south - north) * smooth_z).round() as i32
+    }
+
+    fn lattice_height(&self, x: i32, z: i32) -> i32 {
+        let mut hash = self.seed
+            ^ (x as u32).wrapping_mul(0x9E37_79B9)
+            ^ (z as u32).wrapping_mul(0x85EB_CA6B);
+        hash ^= hash >> 16;
+        hash = hash.wrapping_mul(0x7FEB_352D);
+        hash ^= hash >> 15;
+        let span = self.amplitude.saturating_mul(2).saturating_add(1).max(1) as u32;
+        self.base_height + (hash % span) as i32 - self.amplitude
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +352,38 @@ mod tests {
         assert!(world.remove_section(SectionPosition::new(1, 0, 0)));
         assert_eq!(world.section_count(), 1);
         assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(0, 0, 0)]);
+    }
+
+    #[test]
+    fn terrain_generation_is_deterministic_for_a_seed() {
+        let first = TerrainGenerator::new(12345, 5, 3);
+        let second = TerrainGenerator::new(12345, 5, 3);
+        for z in -12..12 {
+            for x in -12..12 {
+                assert_eq!(first.height_at(x, z), second.height_at(x, z));
+            }
+        }
+    }
+
+    #[test]
+    fn terrain_generation_writes_grass_dirt_and_stone_layers() {
+        let generator = TerrainGenerator::new(7, 6, 0);
+        let mut world = World::new();
+        let written = generator.generate_region(&mut world, 0, 0, 2, 2);
+        assert_eq!(written, 2 * 2 * 7);
+        assert_eq!(world.get_block(BlockPosition::new(0, 6, 0)), GRASS_BLOCK);
+        assert_eq!(world.get_block(BlockPosition::new(0, 5, 0)), DIRT);
+        assert_eq!(world.get_block(BlockPosition::new(0, 1, 0)), STONE);
+    }
+
+    #[test]
+    fn terrain_generation_supports_negative_world_coordinates() {
+        let generator = TerrainGenerator::new(99, 4, 1);
+        let mut world = World::new();
+        generator.generate_region(&mut world, -2, -2, 2, 2);
+        let height = generator.height_at(-1, -1).max(1);
+        assert_eq!(world.get_block(BlockPosition::new(-1, height, -1)), GRASS_BLOCK);
+        assert!(!world.loaded_sections().is_empty());
     }
 
     #[test]
