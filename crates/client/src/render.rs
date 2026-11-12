@@ -6,6 +6,7 @@
 use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
+use crate::atlas::{prototype_atlas_pixels, AtlasRect, TextureAtlasLayout, PROTOTYPE_ATLAS_TILE_COUNT, PROTOTYPE_ATLAS_TILE_SIZE};
 use crate::chunk::ChunkManager;
 use crate::input::InputFrame;
 use crate::interaction::{break_block, place_block, target_block};
@@ -14,7 +15,7 @@ use crate::player::Player;
 use crate::world::{BlockPosition, BlockStateId, SectionPosition, TerrainGenerator, World};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
-    WebGlShader, WebGlUniformLocation,
+    WebGlShader, WebGlTexture, WebGlUniformLocation,
 };
 
 struct SectionGpuMesh {
@@ -25,11 +26,15 @@ struct SectionGpuMesh {
 struct Renderer {
     gl: Gl,
     program: WebGlProgram,
+    atlas_texture: WebGlTexture,
+    atlas_layout: TextureAtlasLayout,
+    atlas_sampler_location: WebGlUniformLocation,
     section_meshes: HashMap<SectionPosition, SectionGpuMesh>,
     outline_buffer: WebGlBuffer,
     matrix_location: WebGlUniformLocation,
     position_attribute: u32,
     color_attribute: u32,
+    uv_attribute: u32,
     world: World,
     chunk_manager: ChunkManager,
     player: Player,
@@ -61,21 +66,26 @@ impl Default for RenderState {
 const VERTEX_SHADER: &str = r#"
 attribute vec3 a_position;
 attribute vec3 a_color;
+attribute vec2 a_uv;
 uniform mat4 u_view_projection;
 varying vec3 v_color;
+varying vec2 v_uv;
 
 void main() {
     gl_Position = u_view_projection * vec4(a_position, 1.0);
     v_color = a_color;
+    v_uv = a_uv;
 }
 "#;
 
 const FRAGMENT_SHADER: &str = r#"
 precision mediump float;
 varying vec3 v_color;
+varying vec2 v_uv;
+uniform sampler2D u_atlas;
 
 void main() {
-    gl_FragColor = vec4(v_color, 1.0);
+    gl_FragColor = texture2D(u_atlas, v_uv) * vec4(v_color, 1.0);
 }
 "#;
 
@@ -100,40 +110,43 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         .map_err(|_| JsValue::from_str("Could not create a WebGL1 context"))?;
 
     let program = link_program(&gl)?;
+    let (atlas_texture, atlas_layout) = create_prototype_texture_atlas(&gl)?;
     let outline_buffer = gl
         .create_buffer()
         .ok_or_else(|| JsValue::from_str("Could not allocate the block outline buffer"))?;
     let matrix_location = gl
         .get_uniform_location(&program, "u_view_projection")
         .ok_or_else(|| JsValue::from_str("Camera matrix uniform is missing"))?;
+    let atlas_sampler_location = gl
+        .get_uniform_location(&program, "u_atlas")
+        .ok_or_else(|| JsValue::from_str("Texture atlas sampler is missing"))?;
 
     let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
     let mut world = World::new();
     let mut chunk_manager = ChunkManager::new(1);
     chunk_manager.update(&mut world, BlockPosition::new(0, 0, 0).chunk(), &generator);
-    let section_meshes = build_section_gpu_meshes(&gl, &world)?;
+    let section_meshes = build_section_gpu_meshes(&gl, &world, atlas_layout)?;
     world.take_dirty_sections();
     let spawn_height = TerrainGenerator::new(0xEA61_2026, 5, 3).height_at(0, 0).max(1) as f64 + 1.01;
     let player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
     gl.use_program(Some(&program));
     let position = gl.get_attrib_location(&program, "a_position");
     let color = gl.get_attrib_location(&program, "a_color");
-    if position < 0 || color < 0 {
+    let uv = gl.get_attrib_location(&program, "a_uv");
+    if position < 0 || color < 0 || uv < 0 {
         return Err(JsValue::from_str("Terrain shader attributes were not found"));
     }
 
-    let stride = (6 * std::mem::size_of::<f32>()) as i32;
+    let stride = (8 * std::mem::size_of::<f32>()) as i32;
     gl.enable_vertex_attrib_array(position as u32);
     gl.vertex_attrib_pointer_with_i32(position as u32, 3, Gl::FLOAT, false, stride, 0);
     gl.enable_vertex_attrib_array(color as u32);
-    gl.vertex_attrib_pointer_with_i32(
-        color as u32,
-        3,
-        Gl::FLOAT,
-        false,
-        stride,
-        (3 * std::mem::size_of::<f32>()) as i32,
-    );
+    gl.vertex_attrib_pointer_with_i32(color as u32, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
+    gl.enable_vertex_attrib_array(uv as u32);
+    gl.vertex_attrib_pointer_with_i32(uv as u32, 2, Gl::FLOAT, false, stride, (6 * std::mem::size_of::<f32>()) as i32);
+    gl.active_texture(Gl::TEXTURE0);
+    gl.bind_texture(Gl::TEXTURE_2D, Some(&atlas_texture));
+    gl.uniform1i(Some(&atlas_sampler_location), 0);
 
     gl.enable(Gl::DEPTH_TEST);
     gl.depth_func(Gl::LEQUAL);
@@ -143,11 +156,15 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         *slot.borrow_mut() = Some(Renderer {
             gl,
             program,
+            atlas_texture,
+            atlas_layout,
+            atlas_sampler_location,
             section_meshes,
             outline_buffer,
             matrix_location,
             position_attribute: position as u32,
             color_attribute: color as u32,
+            uv_attribute: uv as u32,
             world,
             chunk_manager,
             player,
@@ -289,28 +306,33 @@ pub fn draw_frame() -> Result<(), JsValue> {
         let view_projection = multiply(projection, view);
 
         renderer.gl.use_program(Some(&renderer.program));
-        let stride = (6 * std::mem::size_of::<f32>()) as i32;
+        let stride = (8 * std::mem::size_of::<f32>()) as i32;
         renderer.gl.uniform_matrix4fv_with_f32_array(
             Some(&renderer.matrix_location),
             false,
             &view_projection,
         );
         renderer.gl.clear(Gl::COLOR_BUFFER_BIT | Gl::DEPTH_BUFFER_BIT);
+        renderer.gl.active_texture(Gl::TEXTURE0);
+        renderer.gl.bind_texture(Gl::TEXTURE_2D, Some(&renderer.atlas_texture));
+        renderer.gl.uniform1i(Some(&renderer.atlas_sampler_location), 0);
         for mesh in renderer.section_meshes.values() {
             renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&mesh.buffer));
             renderer.gl.vertex_attrib_pointer_with_i32(renderer.position_attribute, 3, Gl::FLOAT, false, stride, 0);
             renderer.gl.vertex_attrib_pointer_with_i32(renderer.color_attribute, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
+            renderer.gl.vertex_attrib_pointer_with_i32(renderer.uv_attribute, 2, Gl::FLOAT, false, stride, (6 * std::mem::size_of::<f32>()) as i32);
             renderer.gl.draw_arrays(Gl::TRIANGLES, 0, mesh.vertex_count);
         }
 
         if let Some(hit) = current_target(renderer) {
-            let outline = block_outline_mesh(hit.position);
+            let outline = block_outline_mesh(hit.position, renderer.atlas_layout);
             let outline_data = Float32Array::from(outline.as_slice());
             renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&renderer.outline_buffer));
             renderer.gl.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &outline_data, Gl::DYNAMIC_DRAW);
             renderer.gl.vertex_attrib_pointer_with_i32(renderer.position_attribute, 3, Gl::FLOAT, false, stride, 0);
             renderer.gl.vertex_attrib_pointer_with_i32(renderer.color_attribute, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
-            renderer.gl.draw_arrays(Gl::LINES, 0, (outline.len() / 6) as i32);
+            renderer.gl.vertex_attrib_pointer_with_i32(renderer.uv_attribute, 2, Gl::FLOAT, false, stride, (6 * std::mem::size_of::<f32>()) as i32);
+            renderer.gl.draw_arrays(Gl::LINES, 0, (outline.len() / 8) as i32);
         }
         Ok(())
     })
@@ -362,7 +384,7 @@ fn current_target(renderer: &Renderer) -> Option<crate::raycast::BlockHit> {
     target_block(&renderer.world, eye, direction, 5.0)
 }
 
-fn block_outline_mesh(position: BlockPosition) -> Vec<f32> {
+fn block_outline_mesh(position: BlockPosition, atlas: TextureAtlasLayout) -> Vec<f32> {
     let x = position.x as f32 - 0.003;
     let y = position.y as f32 - 0.003;
     let z = position.z as f32 - 0.003;
@@ -378,20 +400,23 @@ fn block_outline_mesh(position: BlockPosition) -> Vec<f32> {
         (4, 5), (5, 7), (7, 6), (6, 4),
         (0, 4), (1, 5), (2, 6), (3, 7),
     ];
-    let mut vertices = Vec::with_capacity(24 * 6);
+    let white = atlas.rect(8).expect("outline tile exists in prototype atlas");
+    let uv = [(white.u_min + white.u_max) * 0.5, (white.v_min + white.v_max) * 0.5];
+    let mut vertices = Vec::with_capacity(24 * 8);
     for (a, b) in edges {
         for point in [corners[a], corners[b]] {
             vertices.extend_from_slice(&point);
             vertices.extend_from_slice(&[1.0, 1.0, 1.0]);
+            vertices.extend_from_slice(&uv);
         }
     }
     vertices
 }
 
-fn build_section_gpu_meshes(gl: &Gl, world: &World) -> Result<HashMap<SectionPosition, SectionGpuMesh>, JsValue> {
+fn build_section_gpu_meshes(gl: &Gl, world: &World, atlas_layout: TextureAtlasLayout) -> Result<HashMap<SectionPosition, SectionGpuMesh>, JsValue> {
     let mut meshes = HashMap::new();
     for section in world.loaded_sections() {
-        let vertices = build_world_section_mesh(world, section);
+        let vertices = build_world_section_mesh_with_atlas(world, section, atlas_layout);
         if vertices.is_empty() { continue; }
         let buffer = gl.create_buffer().ok_or_else(|| JsValue::from_str("Could not allocate a chunk section buffer"))?;
         let data = Float32Array::from(vertices.as_slice());
@@ -408,7 +433,7 @@ fn update_dirty_section_meshes(renderer: &mut Renderer) -> bool {
     let dirty = renderer.world.take_dirty_sections();
     for section in dirty {
         let vertices = if renderer.world.is_section_loaded(section) {
-            build_world_section_mesh(&renderer.world, section)
+            build_world_section_mesh_with_atlas(&renderer.world, section, renderer.atlas_layout)
         } else {
             Vec::new()
         };
@@ -514,9 +539,37 @@ fn build_world_mesh(world: &World) -> Vec<f32> {
 
 /// Mesh one section while checking neighbouring blocks in the complete world.
 /// This suppresses shared faces even when the neighbour is in another section.
-fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<f32> {
-    let mut vertices = Vec::new();
+fn prototype_atlas_layout() -> TextureAtlasLayout {
+    TextureAtlasLayout::new(PROTOTYPE_ATLAS_TILE_COUNT, PROTOTYPE_ATLAS_TILE_SIZE, 4096)
+        .expect("fixed prototype atlas fits WebGL texture limits")
+}
 
+fn create_prototype_texture_atlas(gl: &Gl) -> Result<(WebGlTexture, TextureAtlasLayout), JsValue> {
+    let max_size = gl.get_parameter(Gl::MAX_TEXTURE_SIZE)?.as_f64().unwrap_or(2048.0).max(1.0) as u32;
+    let layout = TextureAtlasLayout::new(PROTOTYPE_ATLAS_TILE_COUNT, PROTOTYPE_ATLAS_TILE_SIZE, max_size)
+        .map_err(|_| JsValue::from_str("The browser's maximum texture size is too small"))?;
+    let pixels = prototype_atlas_pixels(layout);
+    let (width, height) = layout.dimensions();
+    let texture = gl.create_texture().ok_or_else(|| JsValue::from_str("Could not allocate the block texture atlas"))?;
+    gl.bind_texture(Gl::TEXTURE_2D, Some(&texture));
+    gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+        Gl::TEXTURE_2D, 0, Gl::RGBA as i32, width as i32, height as i32, 0,
+        Gl::RGBA, Gl::UNSIGNED_BYTE, Some(&pixels),
+    )?;
+    gl.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_MIN_FILTER, Gl::NEAREST as i32);
+    gl.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_MAG_FILTER, Gl::NEAREST as i32);
+    gl.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_WRAP_S, Gl::CLAMP_TO_EDGE as i32);
+    gl.tex_parameteri(Gl::TEXTURE_2D, Gl::TEXTURE_WRAP_T, Gl::CLAMP_TO_EDGE as i32);
+    Ok((texture, layout))
+}
+
+fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<f32> {
+    build_world_section_mesh_with_atlas(world, section_pos, prototype_atlas_layout())
+}
+
+/// Mesh one section while checking neighbouring blocks in the complete world.
+fn build_world_section_mesh_with_atlas(world: &World, section_pos: SectionPosition, atlas: TextureAtlasLayout) -> Vec<f32> {
+    let mut vertices = Vec::new();
     for y in 0..16_u8 {
         for z in 0..16_u8 {
             for x in 0..16_u8 {
@@ -525,61 +578,62 @@ fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<
                     section_pos.y * 16 + i32::from(y),
                     section_pos.z * 16 + i32::from(z),
                 );
-                if world.get_block(world_pos) == BlockStateId(0) {
-                    continue;
-                }
-
-                let x0 = world_pos.x as f32;
-                let x1 = x0 + 1.0;
-                let y0 = world_pos.y as f32;
-                let y1 = y0 + 1.0;
-                let z0 = world_pos.z as f32;
-                let z1 = z0 + 1.0;
-
-                let (top_base, side_base, bottom_base) = block_palette(world.get_block(world_pos));
-                let top = shade(top_base, 1.0);
-                let side_a = shade(side_base, 0.78);
-                let side_b = shade(side_base, 0.88);
-                let side_c = shade(side_base, 0.68);
-                let bottom = shade(bottom_base, 0.52);
-
+                let state = world.get_block(world_pos);
+                if state == BlockStateId(0) { continue; }
+                let (top_tile, side_tile, bottom_tile) = block_face_tiles(state);
+                let top_uv = atlas.rect(top_tile).expect("top tile exists");
+                let side_uv = atlas.rect(side_tile).expect("side tile exists");
+                let bottom_uv = atlas.rect(bottom_tile).expect("bottom tile exists");
+                let x0 = world_pos.x as f32; let x1 = x0 + 1.0;
+                let y0 = world_pos.y as f32; let y1 = y0 + 1.0;
+                let z0 = world_pos.z as f32; let z1 = z0 + 1.0;
+                let top = [1.0, 1.0, 1.0];
+                let side_a = shade(top, 0.78);
+                let side_b = shade(top, 0.88);
+                let side_c = shade(top, 0.68);
+                let bottom = shade(top, 0.52);
                 if !world_is_solid(world, world_pos.x, world_pos.y + 1, world_pos.z) {
-                    quad(&mut vertices, [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], top);
+                    quad(&mut vertices, [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], top, top_uv);
                 }
                 if !world_is_solid(world, world_pos.x, world_pos.y - 1, world_pos.z) {
-                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y0,z0],[x0,y0,z0]], bottom);
+                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y0,z0],[x0,y0,z0]], bottom, bottom_uv);
                 }
                 if !world_is_solid(world, world_pos.x - 1, world_pos.y, world_pos.z) {
-                    quad(&mut vertices, [[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0]], side_a);
+                    quad(&mut vertices, [[x0,y0,z0],[x0,y0,z1],[x0,y1,z1],[x0,y1,z0]], side_a, side_uv);
                 }
                 if !world_is_solid(world, world_pos.x + 1, world_pos.y, world_pos.z) {
-                    quad(&mut vertices, [[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1]], side_b);
+                    quad(&mut vertices, [[x1,y0,z1],[x1,y0,z0],[x1,y1,z0],[x1,y1,z1]], side_b, side_uv);
                 }
                 if !world_is_solid(world, world_pos.x, world_pos.y, world_pos.z - 1) {
-                    quad(&mut vertices, [[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0]], side_c);
+                    quad(&mut vertices, [[x1,y0,z0],[x0,y0,z0],[x0,y1,z0],[x1,y1,z0]], side_c, side_uv);
                 }
                 if !world_is_solid(world, world_pos.x, world_pos.y, world_pos.z + 1) {
-                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], side_a);
+                    quad(&mut vertices, [[x0,y0,z1],[x1,y0,z1],[x1,y1,z1],[x0,y1,z1]], side_a, side_uv);
                 }
             }
         }
     }
-
     vertices
 }
 
-
-/// Temporary material palette keyed by internal block-state IDs.
-fn block_palette(state: BlockStateId) -> ([f32; 3], [f32; 3], [f32; 3]) {
+/// Development atlas tile mapping; these values are not 26.3 registry IDs.
+fn block_face_tiles(state: BlockStateId) -> (u32, u32, u32) {
     match state.0 {
-        1 => ([0.30, 0.72, 0.24], [0.48, 0.34, 0.20], [0.30, 0.21, 0.13]), // grass
-        2 => ([0.53, 0.37, 0.23], [0.53, 0.37, 0.23], [0.34, 0.24, 0.16]), // dirt
-        3 => ([0.55, 0.57, 0.60], [0.55, 0.57, 0.60], [0.34, 0.35, 0.37]), // stone
-        4 => ([0.12, 0.48, 0.78], [0.10, 0.38, 0.66], [0.06, 0.24, 0.42]), // water
-        5 => ([0.86, 0.78, 0.52], [0.76, 0.66, 0.42], [0.55, 0.46, 0.30]), // sand
-        6 => ([0.43, 0.27, 0.13], [0.34, 0.20, 0.10], [0.22, 0.13, 0.07]), // log
-        7 => ([0.16, 0.52, 0.19], [0.12, 0.42, 0.14], [0.08, 0.30, 0.10]), // leaves
-        _ => ([0.80, 0.20, 0.80], [0.65, 0.15, 0.65], [0.35, 0.08, 0.35]),
+        1 => (0, 1, 2), 2 => (2, 2, 2), 3 => (3, 3, 3),
+        4 => (4, 4, 4), 5 => (5, 5, 5), 6 => (6, 6, 6),
+        7 => (7, 7, 7), _ => (9, 9, 9),
+    }
+}
+
+fn quad(vertices: &mut Vec<f32>, corners: [[f32; 3]; 4], color: [f32; 3], rect: AtlasRect) {
+    let uvs = [
+        [rect.u_min, rect.v_min], [rect.u_max, rect.v_min],
+        [rect.u_max, rect.v_max], [rect.u_min, rect.v_max],
+    ];
+    for index in [0, 1, 2, 0, 2, 3] {
+        vertices.extend_from_slice(&corners[index]);
+        vertices.extend_from_slice(&color);
+        vertices.extend_from_slice(&uvs[index]);
     }
 }
 
@@ -658,14 +712,14 @@ fn normalize(vector: [f32; 3]) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::{block_palette, build_terrain_mesh, build_world_section_mesh};
+    use super::{block_face_tiles, build_terrain_mesh, build_world_section_mesh};
     use crate::world::{BlockPosition, BlockStateId, SectionPosition, World};
 
     #[test]
     fn voxel_mesh_has_complete_triangle_vertices() {
         let mesh = build_terrain_mesh();
         assert!(!mesh.is_empty());
-        assert_eq!(mesh.len() % 18, 0, "each triangle has three xyz+rgb vertices");
+        assert_eq!(mesh.len() % 24, 0, "each triangle has three xyz+rgb+uv vertices");
         assert!(mesh.iter().all(|value| value.is_finite()));
     }
 
@@ -679,18 +733,16 @@ mod tests {
         let right = build_world_section_mesh(&world, SectionPosition::new(1, 0, 0));
 
         // Each isolated cube has six faces; the shared face is culled on both sides.
-        assert_eq!(left.len(), 5 * 6 * 6);
-        assert_eq!(right.len(), 5 * 6 * 6);
+        assert_eq!(left.len(), 5 * 6 * 8);
+        assert_eq!(right.len(), 5 * 6 * 8);
     }
 
     #[test]
-    fn block_states_use_distinct_material_palettes() {
-        let grass = block_palette(BlockStateId(1));
-        let dirt = block_palette(BlockStateId(2));
-        let stone = block_palette(BlockStateId(3));
-        assert_ne!(grass.0, dirt.0);
-        assert_ne!(dirt.0, stone.0);
-        assert!(grass.0.iter().all(|channel| (0.0..=1.0).contains(channel)));
+    fn block_states_map_to_face_specific_atlas_tiles() {
+        assert_eq!(block_face_tiles(BlockStateId(1)), (0, 1, 2));
+        assert_eq!(block_face_tiles(BlockStateId(2)), (2, 2, 2));
+        assert_eq!(block_face_tiles(BlockStateId(3)), (3, 3, 3));
+        assert_eq!(block_face_tiles(BlockStateId(999)), (9, 9, 9));
     }
 
     #[test]

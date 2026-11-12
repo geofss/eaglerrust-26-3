@@ -99,8 +99,13 @@ The following components are present as isolated, tested foundations. They are i
 
 1. Namespaced metadata and collision descriptors for the small prototype registry; target-version numeric IDs and full registry remain unaudited.
 2. A strict 4096-byte palette-index section decoder for the supplied 26.1.2 reference gateway's documented YZX byte-per-voxel layout. It is not the vanilla packed-long palette container and is not wired into the 26.3 network path.
-3. CPU texture-atlas tile layout and normalized UV rectangle math. GPU upload, texture sampling, and renderer mesh UV integration remain pending.
+3. CPU atlas layout, deterministic development pixel generation, WebGL upload, per-face mesh UVs, and fragment-shader sampling are integrated. The pixels are placeholders; extracting and mapping verified target-pack assets and adding transparent/cutout passes remain pending.
 4. Prototype full-cube and lower-slab collision shapes. The full block shape table and step-up retry remain pending.
 5. Bounded VarInt and length-prefixed packet frame primitives. WebSocket transport, handshake, protocol state machine, compression, and target packet schemas remain pending.
 
 The next correctness gate is to compare the compiled 26.3 target's actual registry, chunk payloads, renderer assets, and protocol against these isolated reference implementations before connecting them to live gameplay.
+
+
+## Textured renderer vertical slice
+
+A deterministic prototype RGBA atlas is generated on the CPU, uploaded through WebGL1, and sampled by the fragment shader. Section meshes carry position, directional tint, and UV attributes. Grass selects separate top, side, and bottom placeholder tiles, while other prototype states map to dedicated development tiles. This is an end-to-end GPU texture path, not a claim that the uploaded HTML's Eagler resource pack has been extracted or mapped.
