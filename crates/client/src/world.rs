@@ -116,6 +116,7 @@ impl ChunkSection {
 #[derive(Debug, Default, Clone)]
 pub struct World {
     sections: std::collections::HashMap<SectionPosition, ChunkSection>,
+    dirty_sections: std::collections::HashSet<SectionPosition>,
 }
 
 impl World {
@@ -131,12 +132,71 @@ impl World {
             .unwrap_or(AIR)
     }
 
-    /// Write a block in world coordinates, allocating its section when needed.
-    pub fn set_block(&mut self, position: BlockPosition, state: BlockStateId) {
-        self.sections
-            .entry(position.section())
-            .or_default()
-            .set(position.local(), state);
+    /// Write a block and mark every loaded section whose mesh may have changed.
+    /// Returns false when the requested state was already present.
+    pub fn set_block(&mut self, position: BlockPosition, state: BlockStateId) -> bool {
+        let section_pos = position.section();
+        let local = position.local();
+
+        if !self.sections.contains_key(&section_pos) && state == AIR {
+            return false;
+        }
+
+        let section = self.sections.entry(section_pos).or_default();
+        if section.get(local) == state {
+            return false;
+        }
+        section.set(local, state);
+        self.dirty_sections.insert(section_pos);
+
+        // A boundary edit can change the visible faces of a loaded neighbour.
+        if local.x == 0 {
+            self.mark_loaded_section_dirty(SectionPosition::new(section_pos.x - 1, section_pos.y, section_pos.z));
+        }
+        if local.x == 15 {
+            self.mark_loaded_section_dirty(SectionPosition::new(section_pos.x + 1, section_pos.y, section_pos.z));
+        }
+        if local.y == 0 {
+            self.mark_loaded_section_dirty(SectionPosition::new(section_pos.x, section_pos.y - 1, section_pos.z));
+        }
+        if local.y == 15 {
+            self.mark_loaded_section_dirty(SectionPosition::new(section_pos.x, section_pos.y + 1, section_pos.z));
+        }
+        if local.z == 0 {
+            self.mark_loaded_section_dirty(SectionPosition::new(section_pos.x, section_pos.y, section_pos.z - 1));
+        }
+        if local.z == 15 {
+            self.mark_loaded_section_dirty(SectionPosition::new(section_pos.x, section_pos.y, section_pos.z + 1));
+        }
+        true
+    }
+
+    fn mark_loaded_section_dirty(&mut self, position: SectionPosition) {
+        if self.sections.contains_key(&position) {
+            self.dirty_sections.insert(position);
+        }
+    }
+
+    /// Remove a loaded section and invalidate adjacent loaded section meshes.
+    pub fn remove_section(&mut self, position: SectionPosition) -> bool {
+        if self.sections.remove(&position).is_none() {
+            return false;
+        }
+        self.dirty_sections.remove(&position);
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x - 1, position.y, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x + 1, position.y, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y - 1, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y + 1, position.z));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y, position.z - 1));
+        self.mark_loaded_section_dirty(SectionPosition::new(position.x, position.y, position.z + 1));
+        true
+    }
+
+    /// Return dirty section positions in deterministic order and clear the queue.
+    pub fn take_dirty_sections(&mut self) -> Vec<SectionPosition> {
+        let mut dirty: Vec<_> = self.dirty_sections.drain().collect();
+        dirty.sort_by_key(|position| (position.x, position.y, position.z));
+        dirty
     }
 
     pub fn section_count(&self) -> usize {
@@ -151,6 +211,40 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_edits_mark_the_section_dirty_only_when_changed() {
+        let mut world = World::new();
+        let position = BlockPosition::new(3, 4, 5);
+        assert!(world.set_block(position, BlockStateId(2)));
+        assert!(!world.set_block(position, BlockStateId(2)));
+        assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(0, 0, 0)]);
+        assert!(world.take_dirty_sections().is_empty());
+    }
+
+    #[test]
+    fn boundary_edits_dirty_loaded_neighbour_sections() {
+        let mut world = World::new();
+        world.set_block(BlockPosition::new(15, 4, 4), BlockStateId(1));
+        world.set_block(BlockPosition::new(16, 4, 4), BlockStateId(1));
+        let dirty = world.take_dirty_sections();
+        assert_eq!(dirty, vec![SectionPosition::new(0, 0, 0), SectionPosition::new(1, 0, 0)]);
+
+        world.set_block(BlockPosition::new(15, 4, 4), BlockStateId(2));
+        assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(0, 0, 0)]);
+    }
+
+    #[test]
+    fn removing_section_invalidates_loaded_neighbours() {
+        let mut world = World::new();
+        world.set_block(BlockPosition::new(15, 1, 1), BlockStateId(1));
+        world.set_block(BlockPosition::new(16, 1, 1), BlockStateId(1));
+        world.take_dirty_sections();
+
+        assert!(world.remove_section(SectionPosition::new(1, 0, 0)));
+        assert_eq!(world.section_count(), 1);
+        assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(0, 0, 0)]);
+    }
 
     #[test]
     fn world_reads_missing_sections_as_air() {
