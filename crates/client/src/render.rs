@@ -248,10 +248,12 @@ pub fn draw_frame() -> Result<(), JsValue> {
                 renderer.player.position.x.floor() as i32, 0,
                 renderer.player.position.z.floor() as i32,
             ).chunk();
-            let chunk_update = renderer.chunk_manager.update(
+            let chunk_update = renderer.chunk_manager.update_with_budget(
                 &mut renderer.world,
                 center_chunk,
                 &TerrainGenerator::new(0xEA61_2026, 5, 3),
+                1,
+                1,
             );
             if chunk_update.loaded_columns > 0 || chunk_update.unloaded_columns > 0 {
                 update_dirty_section_meshes(renderer);
