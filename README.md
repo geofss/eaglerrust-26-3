@@ -6,7 +6,7 @@ A Rust + WebAssembly client reimplementation project targeting modern browsers.
 
 The browser shell boots a Rust-owned WebGL1 renderer. Rust stores block states in 16×16×16 chunk sections and has a sparse world store that reads and writes blocks by world coordinates, including negative coordinates and section boundaries. An internal deterministic terrain generator fills a 48×48 prototype region with placeholder grass, dirt, stone, water, sand, logs, and leaves. The renderer uses temporary block-state material palettes with directional face shading. It generates a 48×48 terrain region with more detailed height variation, sandy shorelines, shallow water, and deterministic tree trunks and foliage. It iterates all loaded sections, combines their exposed-face meshes, and uploads the result to a GPU buffer for perspective rendering.
 
-The browser now drives the Rust player controller: WASD movement, jump, sprint, gravity, and full-cube collision run against the same in-memory world used by the renderer. The camera follows the player, and the browser can raycast from the crosshair, break the targeted block, or place the selected hotbar block. Successful edits rebuild and upload the prototype world mesh immediately. The nine-slot hotbar is exposed through wasm-bindgen and rendered as a browser HUD; mouse/touch selection and number keys 1–9 update the Rust inventory model. Desktop controls use left-click to break and right-click to place; touch controls expose jump, sprint, break, and place actions. This is an integrated local gameplay prototype, not full 26.3 gameplay parity. Block IDs and material colours remain placeholders; the real 26.3 registry, texture atlases, chunk streaming, biomes, caves, entities, multiplayer, and exact movement rules are still pending.
+The browser now drives the Rust player controller: WASD movement, jump, sprint, gravity, and full-cube collision run against the same in-memory world used by the renderer. The camera follows the player, and the browser can raycast from the crosshair, break the targeted block, or place the selected hotbar block. A radius-one chunk manager maintains a 3×3 set of 16×16 columns around the player, loading new columns and unloading distant ones as the player travels. Each section has its own GPU buffer; edits rebuild only dirty section meshes and update only their buffers, while removed columns release their buffers. The nine-slot hotbar is exposed through wasm-bindgen and rendered as a browser HUD; mouse/touch selection and number keys 1–9 update the Rust inventory model. Desktop controls use left-click to break and right-click to place; touch controls expose jump, sprint, break, and place actions. This is an integrated local gameplay prototype, not full 26.3 gameplay parity. Chunk generation is currently synchronous and limited to a small radius; block IDs and material colours remain placeholders. The real 26.3 registry, texture atlases, asynchronous generation, biomes, caves, entities, multiplayer, and exact movement rules are still pending.
 
 ## Architecture
 
@@ -32,10 +32,10 @@ The Rust player controller now drives movement and the camera follows the player
 
 ## Next milestones
 
-1. Replace whole-world edit rebuilds with dirty-section GPU mesh uploads.
-2. Map placeholder block IDs to the actual 26.3 block registry.
-3. Add block textures, atlas sampling, lighting, and fog.
-4. Implement chunk loading/unloading, biomes, caves, and larger-world streaming.
-5. Add entities, persistence, and multiplayer compatibility.
+1. Replace placeholder block IDs with the audited 26.3 block/state registry.
+2. Add texture atlas sampling, transparent/cutout render passes, lighting, and fog.
+3. Move chunk generation off the frame-critical path and add bounded load queues.
+4. Add biomes, caves, height limits, and 26.3-compatible chunk decoding.
+5. Add entities, persistence, audio, and the audited multiplayer handshake/protocol.
 
 A compiled TeaVM/WASM artifact is not a substitute for the original Java source. The project will keep distinguishing implemented Rust systems from compatibility work that is still planned.
