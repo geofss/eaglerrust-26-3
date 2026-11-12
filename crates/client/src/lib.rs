@@ -15,14 +15,17 @@ thread_local! {
 }
 
 pub mod app;
+pub mod atlas;
 pub mod block;
 pub mod chunk;
+pub mod chunk_codec;
 pub mod audio;
 pub mod input;
 pub mod interaction;
 pub mod inventory;
 pub mod network;
 pub mod physics;
+pub mod packet;
 pub mod player;
 pub mod raycast;
 pub mod render;
