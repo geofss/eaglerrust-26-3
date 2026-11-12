@@ -182,9 +182,9 @@ pub fn draw_frame() -> Result<(), JsValue> {
         let height = canvas.height().max(1) as f32;
 
         let eye = [
-            renderer.camera_angle.sin() * 18.0,
-            11.0,
-            renderer.camera_angle.cos() * 18.0,
+            renderer.camera_angle.sin() * 38.0,
+            22.0,
+            renderer.camera_angle.cos() * 38.0,
         ];
         let view = look_at(eye, [0.0, 3.0, 0.0], [0.0, 1.0, 0.0]);
         let projection = perspective(55.0_f32.to_radians(), width / height, 0.1, 100.0);
@@ -254,8 +254,13 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 fn build_terrain_mesh() -> Vec<f32> {
     let mut world = World::new();
     let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
-    generator.generate_region(&mut world, 0, 0, 16, 16);
-    build_world_section_mesh(&world, SectionPosition::new(0, 0, 0))
+    generator.generate_region(&mut world, 0, 0, 32, 32);
+
+    let mut vertices = Vec::new();
+    for section_pos in world.loaded_sections() {
+        vertices.extend(build_world_section_mesh(&world, section_pos));
+    }
+    vertices
 }
 
 /// Mesh one section while checking neighbouring blocks in the complete world.
@@ -276,18 +281,19 @@ fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<
                 }
 
                 // Keep the prototype sample centred around the camera.
-                let x0 = world_pos.x as f32 - 8.0;
+                let x0 = world_pos.x as f32 - 16.0;
                 let x1 = x0 + 1.0;
                 let y0 = world_pos.y as f32;
                 let y1 = y0 + 1.0;
-                let z0 = world_pos.z as f32 - 8.0;
+                let z0 = world_pos.z as f32 - 16.0;
                 let z1 = z0 + 1.0;
 
-                let top = [0.28, 0.68, 0.22];
-                let side_a = [0.48, 0.32, 0.18];
-                let side_b = [0.38, 0.25, 0.14];
-                let side_c = [0.54, 0.36, 0.20];
-                let bottom = [0.32, 0.22, 0.13];
+                let (top_base, side_base, bottom_base) = block_palette(world.get_block(world_pos));
+                let top = shade(top_base, 1.0);
+                let side_a = shade(side_base, 0.78);
+                let side_b = shade(side_base, 0.88);
+                let side_c = shade(side_base, 0.68);
+                let bottom = shade(bottom_base, 0.52);
 
                 if !world_is_solid(world, world_pos.x, world_pos.y + 1, world_pos.z) {
                     quad(&mut vertices, [[x0,y1,z0],[x1,y1,z0],[x1,y1,z1],[x0,y1,z1]], top);
@@ -312,6 +318,21 @@ fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<
     }
 
     vertices
+}
+
+
+/// Temporary material palette keyed by internal block-state IDs.
+fn block_palette(state: BlockStateId) -> ([f32; 3], [f32; 3], [f32; 3]) {
+    match state.0 {
+        1 => ([0.30, 0.72, 0.24], [0.48, 0.34, 0.20], [0.30, 0.21, 0.13]), // grass
+        2 => ([0.53, 0.37, 0.23], [0.53, 0.37, 0.23], [0.34, 0.24, 0.16]), // dirt
+        3 => ([0.55, 0.57, 0.60], [0.55, 0.57, 0.60], [0.34, 0.35, 0.37]), // stone
+        _ => ([0.80, 0.20, 0.80], [0.65, 0.15, 0.65], [0.35, 0.08, 0.35]),
+    }
+}
+
+fn shade(color: [f32; 3], factor: f32) -> [f32; 3] {
+    [color[0] * factor, color[1] * factor, color[2] * factor]
 }
 
 fn world_is_solid(world: &World, x: i32, y: i32, z: i32) -> bool {
