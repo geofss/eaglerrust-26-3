@@ -6,6 +6,10 @@
 use std::{cell::RefCell, collections::HashSet};
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
+use crate::input::InputFrame;
+use crate::interaction::{break_block, place_block, target_block};
+use crate::physics::Vec3;
+use crate::player::Player;
 use crate::world::{BlockPosition, BlockStateId, SectionPosition, TerrainGenerator, World};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
@@ -18,7 +22,8 @@ struct Renderer {
     vertex_buffer: WebGlBuffer,
     matrix_location: WebGlUniformLocation,
     vertex_count: i32,
-    camera_position: [f32; 3],
+    world: World,
+    player: Player,
     camera_yaw: f32,
     camera_pitch: f32,
     pressed_keys: HashSet<String>,
@@ -91,8 +96,11 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         .get_uniform_location(&program, "u_view_projection")
         .ok_or_else(|| JsValue::from_str("Camera matrix uniform is missing"))?;
 
-    let vertices = build_terrain_mesh();
+    let world = build_terrain_world();
+    let vertices = build_world_mesh(&world);
     let vertex_count = (vertices.len() / 6) as i32;
+    let spawn_height = TerrainGenerator::new(0xEA61_2026, 5, 3).height_at(0, 0).max(1) as f64 + 1.01;
+    let player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
     let vertex_data = Float32Array::from(vertices.as_slice());
 
     gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&vertex_buffer));
@@ -133,7 +141,8 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             vertex_buffer,
             matrix_location,
             vertex_count,
-            camera_position: [0.0, 16.0, 36.0],
+            world,
+            player,
             camera_yaw: 0.0,
             camera_pitch: -0.34,
             pressed_keys: HashSet::new(),
@@ -185,7 +194,7 @@ pub fn set_key(key: &str, pressed: bool) {
     });
 }
 
-/// Apply pointer or touch-look movement to the camera.
+/// Apply pointer or touch-look movement to the player camera.
 pub fn look(delta_x: f32, delta_y: f32) {
     RENDERER.with(|slot| {
         if let Some(renderer) = slot.borrow_mut().as_mut() {
@@ -193,11 +202,12 @@ pub fn look(delta_x: f32, delta_y: f32) {
             renderer.camera_pitch = (renderer.camera_pitch
                 - delta_y.clamp(-500.0, 500.0) * 0.003)
                 .clamp(-1.45, 1.45);
+            renderer.player.yaw = f64::from(renderer.camera_yaw);
         }
     });
 }
 
-/// Render one frame using the player's keyboard-controlled free-fly camera.
+/// Render one frame using the Rust player controller and the live prototype world.
 pub fn draw_frame() -> Result<(), JsValue> {
     RENDERER.with(|slot| {
         let mut borrowed = slot.borrow_mut();
@@ -209,19 +219,16 @@ pub fn draw_frame() -> Result<(), JsValue> {
             - renderer.pressed_keys.contains("s") as i32) as f32;
         let strafe = (renderer.pressed_keys.contains("d") as i32
             - renderer.pressed_keys.contains("a") as i32) as f32;
-        let vertical = (renderer.pressed_keys.contains(" ") as i32
-            - renderer.pressed_keys.contains("shift") as i32) as f32;
-        let length = (forward * forward + strafe * strafe).sqrt().max(1.0);
-        let speed = if renderer.pressed_keys.contains("control") { 0.42 } else { 0.22 };
-        let forward_x = renderer.camera_yaw.sin();
-        let forward_z = -renderer.camera_yaw.cos();
-        let right_x = renderer.camera_yaw.cos();
-        let right_z = renderer.camera_yaw.sin();
-        renderer.camera_position[0] +=
-            (forward_x * forward + right_x * strafe) / length * speed;
-        renderer.camera_position[2] +=
-            (forward_z * forward + right_z * strafe) / length * speed;
-        renderer.camera_position[1] += vertical * speed;
+        let input = InputFrame {
+            forward,
+            strafe,
+            jump_pressed: renderer.pressed_keys.contains(" "),
+            sprint_pressed: renderer.pressed_keys.contains("control")
+                || renderer.pressed_keys.contains("shift"),
+            ..InputFrame::default()
+        };
+        renderer.player.yaw = f64::from(renderer.camera_yaw);
+        renderer.player.tick(&renderer.world, &input);
 
         let canvas: HtmlCanvasElement = renderer.gl.canvas()
             .ok_or_else(|| JsValue::from_str("WebGL canvas is unavailable"))?
@@ -236,7 +243,11 @@ pub fn draw_frame() -> Result<(), JsValue> {
             renderer.camera_pitch.sin(),
             -renderer.camera_yaw.cos() * horizontal,
         ];
-        let eye = renderer.camera_position;
+        let eye = [
+            renderer.player.position.x as f32,
+            (renderer.player.position.y + 1.62) as f32,
+            renderer.player.position.z as f32,
+        ];
         let target = [
             eye[0] + direction[0],
             eye[1] + direction[1],
@@ -257,6 +268,66 @@ pub fn draw_frame() -> Result<(), JsValue> {
         renderer.gl.draw_arrays(Gl::TRIANGLES, 0, renderer.vertex_count);
         Ok(())
     })
+}
+
+/// Return the currently targeted prototype block ID, or zero when no block is targeted.
+pub fn target_state() -> u32 {
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let Some(renderer) = borrowed.as_ref() else { return 0; };
+        current_target(renderer).map(|hit| hit.state.0).unwrap_or(0)
+    })
+}
+
+/// Break the block currently under the crosshair and upload the changed world mesh.
+pub fn break_target() -> bool {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(renderer) = borrowed.as_mut() else { return false; };
+        let Some(hit) = current_target(renderer) else { return false; };
+        if !break_block(&mut renderer.world, hit) { return false; }
+        upload_world_mesh(renderer);
+        true
+    })
+}
+
+/// Place the selected prototype block against the face under the crosshair.
+pub fn place_target(state: u32) -> bool {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(renderer) = borrowed.as_mut() else { return false; };
+        let Some(hit) = current_target(renderer) else { return false; };
+        if !place_block(&mut renderer.world, hit, BlockStateId(state)) { return false; }
+        upload_world_mesh(renderer);
+        true
+    })
+}
+
+fn current_target(renderer: &Renderer) -> Option<crate::raycast::BlockHit> {
+    let horizontal = renderer.camera_pitch.cos();
+    let direction = [
+        f64::from(renderer.camera_yaw.sin() * horizontal),
+        f64::from(renderer.camera_pitch.sin()),
+        f64::from(-renderer.camera_yaw.cos() * horizontal),
+    ];
+    let eye = [
+        renderer.player.position.x,
+        renderer.player.position.y + 1.62,
+        renderer.player.position.z,
+    ];
+    target_block(&renderer.world, eye, direction, 5.0)
+}
+
+fn upload_world_mesh(renderer: &mut Renderer) {
+    let vertices = build_world_mesh(&renderer.world);
+    renderer.vertex_count = (vertices.len() / 6) as i32;
+    let vertex_data = Float32Array::from(vertices.as_slice());
+    renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&renderer.vertex_buffer));
+    renderer.gl.buffer_data_with_array_buffer_view(
+        Gl::ARRAY_BUFFER,
+        &vertex_data,
+        Gl::DYNAMIC_DRAW,
+    );
 }
 
 fn compile_shader(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
@@ -307,14 +378,21 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 
 // Each vertex stores position (xyz) followed by a face colour (rgb).
 /// Build a sample section using the same dense block storage used by the world model.
-fn build_terrain_mesh() -> Vec<f32> {
+fn build_terrain_world() -> World {
     let mut world = World::new();
     let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
     generator.generate_region(&mut world, -24, -24, 48, 48);
+    world
+}
 
+fn build_terrain_mesh() -> Vec<f32> {
+    build_world_mesh(&build_terrain_world())
+}
+
+fn build_world_mesh(world: &World) -> Vec<f32> {
     let mut vertices = Vec::new();
     for section_pos in world.loaded_sections() {
-        vertices.extend(build_world_section_mesh(&world, section_pos));
+        vertices.extend(build_world_section_mesh(world, section_pos));
     }
     vertices
 }
@@ -336,12 +414,11 @@ fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<
                     continue;
                 }
 
-                // Keep the prototype sample centred around the camera.
-                let x0 = world_pos.x as f32 - 24.0;
+                let x0 = world_pos.x as f32;
                 let x1 = x0 + 1.0;
                 let y0 = world_pos.y as f32;
                 let y1 = y0 + 1.0;
-                let z0 = world_pos.z as f32 - 24.0;
+                let z0 = world_pos.z as f32;
                 let z1 = z0 + 1.0;
 
                 let (top_base, side_base, bottom_base) = block_palette(world.get_block(world_pos));
