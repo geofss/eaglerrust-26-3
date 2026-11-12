@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
-use crate::world::{BlockPosition, BlockStateId, ChunkSection, LocalBlockPosition, SectionPosition, World};
+use crate::world::{BlockPosition, BlockStateId, LocalBlockPosition, SectionPosition, World};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
     WebGlShader, WebGlUniformLocation,
@@ -277,7 +277,6 @@ fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<
     for y in 0..16_u8 {
         for z in 0..16_u8 {
             for x in 0..16_u8 {
-                let local = LocalBlockPosition { x, y, z };
                 let world_pos = BlockPosition::new(
                     section_pos.x * 16 + i32::from(x),
                     section_pos.y * 16 + i32::from(y),
