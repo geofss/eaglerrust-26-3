@@ -112,6 +112,7 @@ pub fn decode_world(bytes: &[u8]) -> Result<World, SaveError> {
         if !seen.insert(section_position) {
             return Err(SaveError::DuplicateSection(section_position));
         }
+        world.ensure_section(section_position);
 
         for index in 0..SECTION_VOLUME {
             let state = read_u32(bytes, &mut cursor);
@@ -160,7 +161,7 @@ mod tests {
         original.set_block(BlockPosition::new(3, 4, 5), BlockStateId(9001));
 
         let encoded = encode_world(&original);
-        let restored = decode_world(&encoded).unwrap();
+        let mut restored = decode_world(&encoded).unwrap();
         for position in [
             BlockPosition::new(-1, -17, 18),
             BlockPosition::new(16, 2, -16),
