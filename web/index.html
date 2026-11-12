@@ -199,7 +199,7 @@
       </div>
       <div class="viewport-wrap">
         <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
-        <div class="mobile-controls" aria-label="Touch movement controls">
+        <div id="hotbar" class="hotbar" aria-label="Prototype nine-slot hotbar"></div>\n        <div class="mobile-controls" aria-label="Touch movement controls">
           <div class="mobile-pad">
             <button type="button" data-key="w" aria-label="Move forward">▲</button>
             <button type="button" data-key="a" aria-label="Move left">◀</button>
@@ -238,7 +238,35 @@
       await init();
       boot();
       start_renderer(canvasId);
-      status.textContent = "World ready · WASD + pointer-look enabled";
+      status.textContent = "World ready · browser hotbar connected";
+
+      // The visible nine-slot HUD reads and updates the Rust Hotbar model.
+      const hotbarRoot = document.getElementById("hotbar");
+      const blockNames = ["Empty", "Grass", "Dirt", "Stone", "Water", "Sand", "Log", "Leaves"];
+      const blockColors = ["transparent", "#63ad48", "#8a6546", "#9da3aa", "#287db8", "#d8c47e", "#79502e", "#39864a"];
+      for (let slot = 0; slot < 9; slot++) {
+        const button = document.createElement("button");
+        button.type = "button"; button.className = "hotbar-slot"; button.dataset.slot = String(slot);
+        button.setAttribute("aria-label", `Select hotbar slot ${slot + 1}`);
+        button.addEventListener("click", () => { select_hotbar_slot(slot); refreshHotbar(); });
+        hotbarRoot.append(button);
+      }
+      function refreshHotbar() {
+        const selected = selected_hotbar_slot();
+        [...hotbarRoot.children].forEach((button, slot) => {
+          const item = hotbar_item(slot); const count = hotbar_count(slot);
+          button.classList.toggle("selected", slot === selected); button.innerHTML = "";
+          const swatch = document.createElement("span"); swatch.className = "swatch";
+          swatch.style.background = blockColors[item] || "transparent";
+          const label = document.createElement("span"); label.textContent = blockNames[item] || "Block";
+          const amount = document.createElement("span"); amount.textContent = count ? String(count) : "";
+          button.append(swatch, label, amount);
+        });
+      }
+      refreshHotbar();
+      window.addEventListener("keydown", (event) => {
+        if (/^[1-9]$/.test(event.key)) { select_hotbar_slot(Number(event.key) - 1); refreshHotbar(); }
+      });
 
       const movementKeys = new Set(["w", "a", "s", "d", " ", "shift", "control"]);
       window.addEventListener("keydown", (event) => {
