@@ -488,6 +488,7 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 
 // Each vertex stores position (xyz) followed by a face colour (rgb).
 /// Build a sample section using the same dense block storage used by the world model.
+#[cfg(test)]
 fn build_terrain_world() -> World {
     let mut world = World::new();
     let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
@@ -495,10 +496,12 @@ fn build_terrain_world() -> World {
     world
 }
 
+#[cfg(test)]
 fn build_terrain_mesh() -> Vec<f32> {
     build_world_mesh(&build_terrain_world())
 }
 
+#[cfg(test)]
 fn build_world_mesh(world: &World) -> Vec<f32> {
     let mut vertices = Vec::new();
     for section_pos in world.loaded_sections() {
