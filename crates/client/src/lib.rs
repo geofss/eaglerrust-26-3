@@ -30,7 +30,19 @@ pub fn resize_renderer(canvas_id: &str) -> Result<(), JsValue> {
     render::resize_renderer(canvas_id)
 }
 
-/// Draw a single frame. The first milestone is a clean WebGL clear.
+/// Set or clear a keyboard key for the Rust camera controller.
+#[wasm_bindgen]
+pub fn set_key(key: &str, pressed: bool) {
+    render::set_key(key, pressed);
+}
+
+/// Apply pointer/touch movement to the Rust camera.
+#[wasm_bindgen]
+pub fn look(delta_x: f32, delta_y: f32) {
+    render::look(delta_x, delta_y);
+}
+
+/// Draw one frame using the current player camera.
 #[wasm_bindgen]
 pub fn draw_frame() -> Result<(), JsValue> {
     render::draw_frame()
