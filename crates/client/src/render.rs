@@ -253,7 +253,7 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 /// Build a sample section using the same dense block storage used by the world model.
 fn build_terrain_mesh() -> Vec<f32> {
     let mut world = World::new();
-    let generator = TerrainGenerator::new(0xEAG1_2026, 5, 3);
+    let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
     generator.generate_region(&mut world, 0, 0, 16, 16);
     build_world_section_mesh(&world, SectionPosition::new(0, 0, 0))
 }
