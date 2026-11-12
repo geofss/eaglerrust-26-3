@@ -16,6 +16,7 @@ thread_local! {
 
 pub mod app;
 pub mod block;
+pub mod chunk;
 pub mod audio;
 pub mod input;
 pub mod interaction;
