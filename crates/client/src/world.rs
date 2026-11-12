@@ -342,7 +342,7 @@ impl TerrainGenerator {
         let north = a + (b - a) * smooth_x;
         let south = c + (d - c) * smooth_x;
         let broad = (north + (south - north) * smooth_z).round() as i32;
-        let detail = (self.feature_hash(x, z) % 3) as i32 - 1;
+        let detail = if self.amplitude == 0 { 0 } else { (self.feature_hash(x, z) % 3) as i32 - 1 };
         broad + detail
     }
 
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn terrain_generation_supports_negative_world_coordinates() {
-        let generator = TerrainGenerator::new(99, 7, 1);
+        let generator = TerrainGenerator::new(99, 9, 1);
         let mut world = World::new();
         generator.generate_region(&mut world, -2, -2, 2, 2);
         let height = generator.height_at(-1, -1).max(1);
