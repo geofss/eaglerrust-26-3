@@ -2,7 +2,7 @@
 
 ## Scope and version boundary
 
-The target is the user-supplied compiled **Eaglercraft 26.3** browser distribution. The available source reference is **EaglercraftX 26.1.2**. The 26.1.2 code is useful for understanding vanilla client architecture and selected algorithms, but it is not proof of 26.3 parity. Every ported behavior must be checked against the 26.3 target before being called compatible.
+The target is the user-supplied compiled **Eaglercraft 26.3** browser distribution. The available source reference is **EaglercraftX 26.1.2**. The supplied 26.1.2 archive includes a TeaVM browser client and a documented reference gateway protocol. It is useful for understanding selected browser adapters and that reference implementation, but it is not proof of 26.3 parity or necessarily the official target protocol. Every ported behavior must be checked against the 26.3 target before being called compatible.
 
 The 26.3 HTML is a compiled distribution, not an original source tree. It cannot be treated as a substitute for Java source. The 26.1.2 archive is therefore a reference, not the target runtime.
 
@@ -37,12 +37,12 @@ Paths under `merged/` refer to entries inside the nested decompile ZIP. Paths un
 
 The current Rust tree has 15 modules. The key status is:
 
-- `world.rs`, `chunk.rs`, `render.rs`: a real but deliberately small sparse-world, procedural terrain, chunk-streaming, and WebGL1 voxel prototype.
-- `block.rs`: only eight placeholder block definitions; IDs and material behavior are not the official 26.3 registry.
+- `world.rs`, `chunk.rs`, `render.rs`: a real but deliberately small sparse-world, procedural terrain, chunk-streaming, and WebGL1 voxel prototype. `chunk_codec.rs` decodes only the documented 26.1.2 reference gateway's byte-per-voxel palette payload; `atlas.rs` computes CPU-side atlas tile/UV layout only.
+- `block.rs`: a small namespaced prototype registry with nine entries and limited collision metadata; IDs and material behavior are not the official 26.3 registry.
 - `player.rs`, `physics.rs`: a reference-informed movement baseline and full-cube AABB collision. Complex voxel shapes and step-up collision are not implemented.
 - `raycast.rs`, `interaction.rs`, `inventory.rs`: local prototype block targeting, breaking/placing, and a nine-slot hotbar.
 - `storage.rs`: an internal snapshot codec; no browser persistence adapter yet.
-- `network.rs`: connection-state enum only; no WebSocket transport, handshake, or packet codec.
+- `network.rs` and `packet.rs`: connection-state enum plus bounded VarInt and length-prefixed frame primitives; no WebSocket transport, handshake, or target packet schemas.
 - `audio.rs`: audio lifecycle enum only; no Web Audio implementation.
 - `app.rs`, `input.rs`: lifecycle and input primitives.
 
