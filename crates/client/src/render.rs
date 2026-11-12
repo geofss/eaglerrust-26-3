@@ -133,9 +133,9 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             vertex_buffer,
             matrix_location,
             vertex_count,
-            camera_position: [0.0, 10.0, 22.0],
+            camera_position: [0.0, 16.0, 36.0],
             camera_yaw: 0.0,
-            camera_pitch: -0.28,
+            camera_pitch: -0.34,
             pressed_keys: HashSet::new(),
         });
     });
@@ -243,7 +243,7 @@ pub fn draw_frame() -> Result<(), JsValue> {
             eye[2] + direction[2],
         ];
         let view = look_at(eye, target, [0.0, 1.0, 0.0]);
-        let projection = perspective(55.0_f32.to_radians(), width / height, 0.1, 100.0);
+        let projection = perspective(60.0_f32.to_radians(), width / height, 0.1, 180.0);
         let view_projection = multiply(projection, view);
 
         renderer.gl.use_program(Some(&renderer.program));
@@ -310,7 +310,7 @@ fn link_program(gl: &Gl) -> Result<WebGlProgram, JsValue> {
 fn build_terrain_mesh() -> Vec<f32> {
     let mut world = World::new();
     let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
-    generator.generate_region(&mut world, 0, 0, 32, 32);
+    generator.generate_region(&mut world, -24, -24, 48, 48);
 
     let mut vertices = Vec::new();
     for section_pos in world.loaded_sections() {
@@ -337,11 +337,11 @@ fn build_world_section_mesh(world: &World, section_pos: SectionPosition) -> Vec<
                 }
 
                 // Keep the prototype sample centred around the camera.
-                let x0 = world_pos.x as f32 - 16.0;
+                let x0 = world_pos.x as f32 - 24.0;
                 let x1 = x0 + 1.0;
                 let y0 = world_pos.y as f32;
                 let y1 = y0 + 1.0;
-                let z0 = world_pos.z as f32 - 16.0;
+                let z0 = world_pos.z as f32 - 24.0;
                 let z1 = z0 + 1.0;
 
                 let (top_base, side_base, bottom_base) = block_palette(world.get_block(world_pos));
@@ -383,6 +383,10 @@ fn block_palette(state: BlockStateId) -> ([f32; 3], [f32; 3], [f32; 3]) {
         1 => ([0.30, 0.72, 0.24], [0.48, 0.34, 0.20], [0.30, 0.21, 0.13]), // grass
         2 => ([0.53, 0.37, 0.23], [0.53, 0.37, 0.23], [0.34, 0.24, 0.16]), // dirt
         3 => ([0.55, 0.57, 0.60], [0.55, 0.57, 0.60], [0.34, 0.35, 0.37]), // stone
+        4 => ([0.12, 0.48, 0.78], [0.10, 0.38, 0.66], [0.06, 0.24, 0.42]), // water
+        5 => ([0.86, 0.78, 0.52], [0.76, 0.66, 0.42], [0.55, 0.46, 0.30]), // sand
+        6 => ([0.43, 0.27, 0.13], [0.34, 0.20, 0.10], [0.22, 0.13, 0.07]), // log
+        7 => ([0.16, 0.52, 0.19], [0.12, 0.42, 0.14], [0.08, 0.30, 0.10]), // leaves
         _ => ([0.80, 0.20, 0.80], [0.65, 0.15, 0.65], [0.35, 0.08, 0.35]),
     }
 }
