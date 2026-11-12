@@ -30,6 +30,7 @@ struct Renderer {
     position_attribute: u32,
     color_attribute: u32,
     world: World,
+    chunk_manager: ChunkManager,
     player: Player,
     camera_yaw: f32,
     camera_pitch: f32,
@@ -105,8 +106,12 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         .get_uniform_location(&program, "u_view_projection")
         .ok_or_else(|| JsValue::from_str("Camera matrix uniform is missing"))?;
 
-    let world = build_terrain_world();
+    let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
+    let mut world = World::new();
+    let mut chunk_manager = ChunkManager::new(1);
+    chunk_manager.update(&mut world, BlockPosition::new(0, 0, 0).chunk(), &generator);
     let section_meshes = build_section_gpu_meshes(&gl, &world)?;
+    world.take_dirty_sections();
     let spawn_height = TerrainGenerator::new(0xEA61_2026, 5, 3).height_at(0, 0).max(1) as f64 + 1.01;
     let player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
     gl.use_program(Some(&program));
@@ -143,6 +148,7 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             position_attribute: position as u32,
             color_attribute: color as u32,
             world,
+            chunk_manager,
             player,
             camera_yaw: 0.0,
             camera_pitch: -0.34,
@@ -237,6 +243,18 @@ pub fn draw_frame() -> Result<(), JsValue> {
         renderer.tick_accumulator += elapsed;
         while renderer.tick_accumulator >= 0.05 {
             renderer.player.tick(&renderer.world, &input);
+            let center_chunk = BlockPosition::new(
+                renderer.player.position.x.floor() as i32, 0,
+                renderer.player.position.z.floor() as i32,
+            ).chunk();
+            let chunk_update = renderer.chunk_manager.update(
+                &mut renderer.world,
+                center_chunk,
+                &TerrainGenerator::new(0xEA61_2026, 5, 3),
+            );
+            if chunk_update.loaded_columns > 0 || chunk_update.unloaded_columns > 0 {
+                update_dirty_section_meshes(renderer);
+            }
             renderer.tick_accumulator -= 0.05;
         }
 
