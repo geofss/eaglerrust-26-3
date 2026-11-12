@@ -3,7 +3,7 @@
 //! Rust creates the block mesh, owns the camera and submits every frame.
 //! This is a renderer milestone, not yet the complete Minecraft client.
 
-use std::{cell::RefCell, collections::HashSet};
+use std::{cell::RefCell, collections::{HashMap, HashSet}};
 use js_sys::Float32Array;
 use wasm_bindgen::{prelude::*, JsCast};
 use crate::input::InputFrame;
@@ -16,15 +16,19 @@ use web_sys::{
     WebGlShader, WebGlUniformLocation,
 };
 
+struct SectionGpuMesh {
+    buffer: WebGlBuffer,
+    vertex_count: i32,
+}
+
 struct Renderer {
     gl: Gl,
     program: WebGlProgram,
-    vertex_buffer: WebGlBuffer,
+    section_meshes: HashMap<SectionPosition, SectionGpuMesh>,
     outline_buffer: WebGlBuffer,
     matrix_location: WebGlUniformLocation,
     position_attribute: u32,
     color_attribute: u32,
-    vertex_count: i32,
     world: World,
     player: Player,
     camera_yaw: f32,
@@ -94,9 +98,6 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         .map_err(|_| JsValue::from_str("Could not create a WebGL1 context"))?;
 
     let program = link_program(&gl)?;
-    let vertex_buffer = gl
-        .create_buffer()
-        .ok_or_else(|| JsValue::from_str("Could not allocate the terrain buffer"))?;
     let outline_buffer = gl
         .create_buffer()
         .ok_or_else(|| JsValue::from_str("Could not allocate the block outline buffer"))?;
@@ -105,19 +106,9 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         .ok_or_else(|| JsValue::from_str("Camera matrix uniform is missing"))?;
 
     let world = build_terrain_world();
-    let vertices = build_world_mesh(&world);
-    let vertex_count = (vertices.len() / 6) as i32;
+    let section_meshes = build_section_gpu_meshes(&gl, &world)?;
     let spawn_height = TerrainGenerator::new(0xEA61_2026, 5, 3).height_at(0, 0).max(1) as f64 + 1.01;
     let player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
-    let vertex_data = Float32Array::from(vertices.as_slice());
-
-    gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&vertex_buffer));
-    gl.buffer_data_with_array_buffer_view(
-        Gl::ARRAY_BUFFER,
-        &vertex_data,
-        Gl::STATIC_DRAW,
-    );
-
     gl.use_program(Some(&program));
     let position = gl.get_attrib_location(&program, "a_position");
     let color = gl.get_attrib_location(&program, "a_color");
@@ -146,12 +137,11 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         *slot.borrow_mut() = Some(Renderer {
             gl,
             program,
-            vertex_buffer,
+            section_meshes,
             outline_buffer,
             matrix_location,
             position_attribute: position as u32,
             color_attribute: color as u32,
-            vertex_count,
             world,
             player,
             camera_yaw: 0.0,
@@ -278,17 +268,19 @@ pub fn draw_frame() -> Result<(), JsValue> {
         let view_projection = multiply(projection, view);
 
         renderer.gl.use_program(Some(&renderer.program));
-        renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&renderer.vertex_buffer));
         let stride = (6 * std::mem::size_of::<f32>()) as i32;
-        renderer.gl.vertex_attrib_pointer_with_i32(renderer.position_attribute, 3, Gl::FLOAT, false, stride, 0);
-        renderer.gl.vertex_attrib_pointer_with_i32(renderer.color_attribute, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
         renderer.gl.uniform_matrix4fv_with_f32_array(
             Some(&renderer.matrix_location),
             false,
             &view_projection,
         );
         renderer.gl.clear(Gl::COLOR_BUFFER_BIT | Gl::DEPTH_BUFFER_BIT);
-        renderer.gl.draw_arrays(Gl::TRIANGLES, 0, renderer.vertex_count);
+        for mesh in renderer.section_meshes.values() {
+            renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&mesh.buffer));
+            renderer.gl.vertex_attrib_pointer_with_i32(renderer.position_attribute, 3, Gl::FLOAT, false, stride, 0);
+            renderer.gl.vertex_attrib_pointer_with_i32(renderer.color_attribute, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
+            renderer.gl.draw_arrays(Gl::TRIANGLES, 0, mesh.vertex_count);
+        }
 
         if let Some(hit) = current_target(renderer) {
             let outline = block_outline_mesh(hit.position);
@@ -319,8 +311,7 @@ pub fn break_target() -> bool {
         let Some(renderer) = borrowed.as_mut() else { return false; };
         let Some(hit) = current_target(renderer) else { return false; };
         if !break_block(&mut renderer.world, hit) { return false; }
-        upload_world_mesh(renderer);
-        true
+        update_dirty_section_meshes(renderer)
     })
 }
 
@@ -331,8 +322,7 @@ pub fn place_target(state: u32) -> bool {
         let Some(renderer) = borrowed.as_mut() else { return false; };
         let Some(hit) = current_target(renderer) else { return false; };
         if !place_block(&mut renderer.world, hit, BlockStateId(state)) { return false; }
-        upload_world_mesh(renderer);
-        true
+        update_dirty_section_meshes(renderer)
     })
 }
 
@@ -377,16 +367,51 @@ fn block_outline_mesh(position: BlockPosition) -> Vec<f32> {
     vertices
 }
 
-fn upload_world_mesh(renderer: &mut Renderer) {
-    let vertices = build_world_mesh(&renderer.world);
-    renderer.vertex_count = (vertices.len() / 6) as i32;
-    let vertex_data = Float32Array::from(vertices.as_slice());
-    renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&renderer.vertex_buffer));
-    renderer.gl.buffer_data_with_array_buffer_view(
-        Gl::ARRAY_BUFFER,
-        &vertex_data,
-        Gl::DYNAMIC_DRAW,
-    );
+fn build_section_gpu_meshes(gl: &Gl, world: &World) -> Result<HashMap<SectionPosition, SectionGpuMesh>, JsValue> {
+    let mut meshes = HashMap::new();
+    for section in world.loaded_sections() {
+        let vertices = build_world_section_mesh(world, section);
+        if vertices.is_empty() { continue; }
+        let buffer = gl.create_buffer().ok_or_else(|| JsValue::from_str("Could not allocate a chunk section buffer"))?;
+        let data = Float32Array::from(vertices.as_slice());
+        gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&buffer));
+        gl.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &data, Gl::STATIC_DRAW);
+        meshes.insert(section, SectionGpuMesh { buffer, vertex_count: (vertices.len() / 6) as i32 });
+    }
+    Ok(meshes)
+}
+
+/// Rebuild only sections invalidated by a world edit; neighbouring section
+/// meshes are included by World::set_block when an edit touches a boundary.
+fn update_dirty_section_meshes(renderer: &mut Renderer) -> bool {
+    let dirty = renderer.world.take_dirty_sections();
+    for section in dirty {
+        let vertices = if renderer.world.is_section_loaded(section) {
+            build_world_section_mesh(&renderer.world, section)
+        } else {
+            Vec::new()
+        };
+        if vertices.is_empty() {
+            if let Some(old) = renderer.section_meshes.remove(&section) {
+                renderer.gl.delete_buffer(Some(&old.buffer));
+            }
+            continue;
+        }
+        let buffer = if let Some(existing) = renderer.section_meshes.get(&section) {
+            existing.buffer.clone()
+        } else {
+            let Some(buffer) = renderer.gl.create_buffer() else { return false; };
+            buffer
+        };
+        let data = Float32Array::from(vertices.as_slice());
+        renderer.gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&buffer));
+        renderer.gl.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &data, Gl::DYNAMIC_DRAW);
+        renderer.section_meshes.insert(section, SectionGpuMesh {
+            buffer,
+            vertex_count: (vertices.len() / 6) as i32,
+        });
+    }
+    true
 }
 
 fn compile_shader(gl: &Gl, kind: u32, source: &str) -> Result<WebGlShader, JsValue> {
