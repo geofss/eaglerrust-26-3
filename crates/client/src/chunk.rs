@@ -62,7 +62,6 @@ impl ChunkManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{BlockPosition, BlockStateId};
 
     #[test]
     fn radius_one_loads_nine_columns_and_does_not_reload_stationary_chunks() {
@@ -87,6 +86,8 @@ mod tests {
         assert_eq!(update.loaded_columns, 3);
         assert_eq!(update.unloaded_columns, 3);
         assert_eq!(manager.loaded_columns(), 9);
-        assert_ne!(world.get_block(BlockPosition::new(48, 5, 0)), BlockStateId(0));
+        let sections = world.loaded_sections();
+        assert!(sections.iter().any(|section| section.x == 2));
+        assert!(!sections.iter().any(|section| section.x == -1));
     }
 }
