@@ -67,6 +67,30 @@ pub fn draw_frame() -> Result<(), JsValue> {
     render::draw_frame()
 }
 
+/// Break the block currently targeted by the player.
+#[wasm_bindgen]
+pub fn break_target() -> bool {
+    render::break_target()
+}
+
+/// Place one item from the selected hotbar stack against the targeted face.
+#[wasm_bindgen]
+pub fn place_target() -> bool {
+    let item = BROWSER_HOTBAR.with(|hotbar| {
+        hotbar.borrow().selected().map(|stack| stack.item.0).unwrap_or(0)
+    });
+    if item == 0 || !render::place_target(item) {
+        return false;
+    }
+    BROWSER_HOTBAR.with(|hotbar| hotbar.borrow_mut().consume_selected(1))
+}
+
+/// Return the prototype block ID currently targeted by the crosshair.
+#[wasm_bindgen]
+pub fn target_block_state() -> u32 {
+    render::target_state()
+}
+
 
 /// Select one of the nine browser hotbar slots.
 #[wasm_bindgen]
