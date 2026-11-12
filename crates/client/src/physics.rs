@@ -1,5 +1,5 @@
 //! Deterministic AABB geometry and prototype voxel-shape collision.
-use crate::block::{collision_shape_for_state, is_solid_state, CollisionShapeKind, PROTOTYPE_LOWER_SLAB};
+use crate::block::{collision_shape_for_state, is_solid_state, CollisionShapeKind};
 use crate::world::{BlockPosition, World};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -100,7 +100,8 @@ fn clip_axis(world: &World, bounds: Aabb, delta: f64, axis: usize) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::{BlockStateId, STONE};
+    use crate::block::PROTOTYPE_LOWER_SLAB;
+    use crate::world::STONE;
 
     fn unit_box_at(x: f64) -> Aabb {
         Aabb::new(Vec3::new(x, 0.0, 0.0), Vec3::new(x + 1.0, 1.0, 1.0))
