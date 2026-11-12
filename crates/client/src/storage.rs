@@ -180,7 +180,7 @@ mod tests {
         let mut bytes = vec![0; 12];
         assert!(matches!(decode_world(&bytes), Err(SaveError::InvalidMagic)));
         bytes[..4].copy_from_slice(MAGIC);
-        assert_eq!(decode_world(&bytes), Ok(World::new()));
+        assert_eq!(decode_world(&bytes).unwrap().section_count(), 0);
     }
 
     #[test]
@@ -195,7 +195,16 @@ mod tests {
     }
 
     #[test]
-    fn preserves_allocated_empty_sections() {\n        let mut original = World::new();\n        original.set_block(BlockPosition::new(1, 2, 3), STONE);\n        original.set_block(BlockPosition::new(1, 2, 3), AIR);\n        let restored = decode_world(&encode_world(&original)).unwrap();\n        assert_eq!(restored.section_count(), original.section_count());\n    }\n\n    #[test]\n    fn rejects_section_count_that_exceeds_safety_limit() {
+    fn preserves_allocated_empty_sections() {
+        let mut original = World::new();
+        original.set_block(BlockPosition::new(1, 2, 3), STONE);
+        original.set_block(BlockPosition::new(1, 2, 3), AIR);
+        let restored = decode_world(&encode_world(&original)).unwrap();
+        assert_eq!(restored.section_count(), original.section_count());
+    }
+
+    #[test]
+    fn rejects_section_count_that_exceeds_safety_limit() {
         let mut bytes = encode_world(&World::new());
         bytes[8..12].copy_from_slice(&((MAX_SECTIONS as u32) + 1).to_le_bytes());
         assert!(matches!(decode_world(&bytes), Err(SaveError::TooManySections)));
