@@ -192,6 +192,31 @@ impl World {
         true
     }
 
+    /// Remove every vertical section in one horizontal chunk column.
+    /// Adjacent loaded columns are invalidated so newly exposed faces are remeshed.
+    pub fn remove_column(&mut self, chunk_x: i32, chunk_z: i32) -> usize {
+        let removed: Vec<_> = self
+            .sections
+            .keys()
+            .copied()
+            .filter(|section| section.x == chunk_x && section.z == chunk_z)
+            .collect();
+
+        for section in &removed {
+            self.sections.remove(section);
+            self.dirty_sections.remove(section);
+        }
+
+        for section in &removed {
+            self.mark_loaded_section_dirty(SectionPosition::new(section.x - 1, section.y, section.z));
+            self.mark_loaded_section_dirty(SectionPosition::new(section.x + 1, section.y, section.z));
+            self.mark_loaded_section_dirty(SectionPosition::new(section.x, section.y, section.z - 1));
+            self.mark_loaded_section_dirty(SectionPosition::new(section.x, section.y, section.z + 1));
+        }
+
+        removed.len()
+    }
+
     /// Return dirty section positions in deterministic order and clear the queue.
     pub fn take_dirty_sections(&mut self) -> Vec<SectionPosition> {
         let mut dirty: Vec<_> = self.dirty_sections.drain().collect();
@@ -428,6 +453,21 @@ mod tests {
 
         world.set_block(BlockPosition::new(15, 4, 4), BlockStateId(2));
         assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(0, 0, 0), SectionPosition::new(1, 0, 0)]);
+    }
+
+    #[test]
+    fn removing_a_column_invalidates_adjacent_loaded_sections() {
+        let mut world = World::new();
+        world.set_block(BlockPosition::new(15, 4, 4), BlockStateId(1));
+        world.set_block(BlockPosition::new(16, 4, 4), BlockStateId(1));
+        world.set_block(BlockPosition::new(0, 20, 0), BlockStateId(1));
+        world.take_dirty_sections();
+
+        assert_eq!(world.remove_column(0, 0), 2);
+        assert!(!world.is_section_loaded(SectionPosition::new(0, 0, 0)));
+        assert!(!world.is_section_loaded(SectionPosition::new(0, 1, 0)));
+        assert!(world.is_section_loaded(SectionPosition::new(1, 0, 0)));
+        assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(1, 0, 0)]);
     }
 
     #[test]
