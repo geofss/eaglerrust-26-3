@@ -9,7 +9,7 @@ impl Player {
  pub fn bounds(&self)->Aabb{Aabb::new(Vec3::new(self.position.x-0.3,self.position.y,self.position.z-0.3),Vec3::new(self.position.x+0.3,self.position.y+1.8,self.position.z+0.3))}
  /// Advance one fixed simulation step; a 20 Hz tick is the intended host cadence.
  pub fn tick(&mut self,world:&World,input:&InputFrame){
-  let(forward,strafe)=input.normalized_movement();let sin=self.yaw.sin();let cos=self.yaw.cos();let speed=if input.sprint_pressed{0.13}else{0.1};
+  let(forward,strafe)=input.normalized_movement();let forward=f64::from(forward);let strafe=f64::from(strafe);let sin=self.yaw.sin();let cos=self.yaw.cos();let speed=if input.sprint_pressed{0.13}else{0.1};
   self.velocity.x=(sin*forward+cos*strafe)*speed;self.velocity.z=(-cos*forward+sin*strafe)*speed;
   if input.jump_pressed&&self.on_ground{self.velocity.y=0.42;self.on_ground=false;}
   self.velocity.y=(self.velocity.y-0.08).max(-3.92);
