@@ -6,6 +6,9 @@
 
 pub use crate::packet::{decode_packet_frame, encode_packet_frame, PacketError, PacketReader, PacketWriter};
 
+/// Default Eaglercraft 26.3 WebSocket subprotocol requested by the browser client.
+pub const DEFAULT_EAGLER_SUBPROTOCOL: &str = "eaglercraft-26.3";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
     Disconnected,
@@ -48,7 +51,7 @@ mod browser {
             username: &str,
             uuid: [u8; 16],
         ) -> Result<Self, JsValue> {
-            Self::connect_with_subprotocol(url, host, port, username, uuid, "eaglercraft")
+            Self::connect_with_subprotocol(url, host, port, username, uuid, crate::network::DEFAULT_EAGLER_SUBPROTOCOL)
         }
 
         pub fn connect_with_subprotocol(
