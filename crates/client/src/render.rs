@@ -466,21 +466,35 @@ fn reference_face_id(face: [i32; 3]) -> u8 {
     }
 }
 
-/// Build the audited reference Player Action payload for start/finish digging.
-pub fn server_dig_action_payload(status: i32) -> Option<Vec<u8>> {
+/// Build a reference Player Action payload for a specific captured dig target.
+/// Status values 0/1/2 are reference-protocol assumptions, not 26.3-verified.
+pub fn server_dig_action_payload_at(
+    status: i32,
+    position: BlockPosition,
+    face: [i32; 3],
+) -> Option<Vec<u8>> {
     if status != 0 && status != 1 && status != 2 { return None; }
     RENDERER.with(|slot| {
         let borrowed = slot.borrow();
         let renderer = borrowed.as_ref()?;
         if !renderer.server_world_active { return None; }
-        let hit = current_target(renderer)?;
         let mut payload = Vec::with_capacity(14);
         encode_reference_varint(status, &mut payload);
         payload.extend_from_slice(&pack_reference_block_position(
-            hit.position.x, hit.position.y, hit.position.z,
+            position.x, position.y, position.z,
         ).to_be_bytes());
-        payload.push(reference_face_id(hit.face));
+        payload.push(reference_face_id(face));
         Some(payload)
+    })
+}
+
+/// Build a reference Player Action payload for the currently targeted block.
+pub fn server_dig_action_payload(status: i32) -> Option<Vec<u8>> {
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let renderer = borrowed.as_ref()?;
+        let hit = current_target(renderer)?;
+        server_dig_action_payload_at(status, hit.position, hit.face)
     })
 }
 
