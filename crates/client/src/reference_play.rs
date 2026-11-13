@@ -420,6 +420,22 @@ mod tests {
     }
 
     #[test]
+    fn decodes_reference_container_slot_updates() {
+        use crate::packet::PacketWriter;
+        let mut writer = PacketWriter::new();
+        writer.write_bytes(&[0]);
+        writer.write_bytes(&7_i16.to_be_bytes());
+        writer.write_varint(351);
+        writer.write_varint(32);
+        assert_eq!(
+            decode_reference_play_packet(0x0e, &writer.into_bytes()).unwrap(),
+            ReferencePlayPacket::SetContainerSlot {
+                window: 0, slot: 7, item_id: 351, count: 32,
+            }
+        );
+    }
+
+    #[test]
     fn decodes_unload_and_player_teleport_packets() {
         use crate::packet::PacketWriter;
         let mut unload = PacketWriter::new();
