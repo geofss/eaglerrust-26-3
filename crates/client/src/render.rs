@@ -59,6 +59,7 @@ struct Renderer {
     breaking_held: bool,
     mining: MiningController,
     active_dig: Option<(BlockPosition, [i32; 3])>,
+    completed_dig: Option<(BlockPosition, [i32; 3])>,
     pending_dig_actions: Vec<(i32, BlockPosition, [i32; 3])>,
 }
 
@@ -194,6 +195,7 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             breaking_held: false,
             mining: MiningController::default(),
             active_dig: None,
+            completed_dig: None,
             pending_dig_actions: Vec::new(),
         });
     });
@@ -326,9 +328,13 @@ pub fn draw_frame() -> Result<(), JsValue> {
         // remains authoritative over multiplayer block changes.
         let hit = current_target(renderer);
         if renderer.server_world_active {
-            let desired = if renderer.breaking_held {
+            let raw_desired = if renderer.breaking_held {
                 hit.map(|target| (target.position, target.face))
             } else { None };
+            if renderer.completed_dig.is_some() && raw_desired != renderer.completed_dig {
+                renderer.completed_dig = None;
+            }
+            let desired = if raw_desired == renderer.completed_dig { None } else { raw_desired };
             if desired != renderer.active_dig {
                 if let Some(previous) = renderer.active_dig.take() {
                     renderer.pending_dig_actions.push((1, previous.0, previous.1));
@@ -339,17 +345,19 @@ pub fn draw_frame() -> Result<(), JsValue> {
                         MiningUpdate::Completed { .. } => {
                             renderer.pending_dig_actions.push((0, next.0, next.1));
                             renderer.pending_dig_actions.push((2, next.0, next.1));
+                            renderer.completed_dig = Some(next);
                         }
-                        _ => renderer.pending_dig_actions.push((0, next.0, next.1)),
-                    }
-                    if renderer.mining.progress() > 0.0 {
-                        renderer.active_dig = Some(next);
+                        _ => {
+                            renderer.pending_dig_actions.push((0, next.0, next.1));
+                            renderer.active_dig = Some(next);
+                        }
                     }
                 }
             } else if let Some(active) = renderer.active_dig {
                 if matches!(renderer.mining.tick(hit, true, elapsed as f32), MiningUpdate::Completed { .. }) {
                     renderer.pending_dig_actions.push((2, active.0, active.1));
                     renderer.active_dig = None;
+                    renderer.completed_dig = Some(active);
                 }
             }
         } else {
@@ -490,12 +498,14 @@ pub fn server_dig_action_payload_at(
 
 /// Build a reference Player Action payload for the currently targeted block.
 pub fn server_dig_action_payload(status: i32) -> Option<Vec<u8>> {
-    RENDERER.with(|slot| {
+    let target = RENDERER.with(|slot| {
         let borrowed = slot.borrow();
         let renderer = borrowed.as_ref()?;
+        if !renderer.server_world_active { return None; }
         let hit = current_target(renderer)?;
-        server_dig_action_payload_at(status, hit.position, hit.face)
-    })
+        Some((hit.position, hit.face))
+    })?;
+    server_dig_action_payload_at(status, target.0, target.1)
 }
 
 /// Build the audited reference Use Item On payload for the targeted block face.
