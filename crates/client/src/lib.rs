@@ -196,9 +196,16 @@ pub fn tick_reference_network() -> Result<u32, JsValue> {
                 protocol::ProtocolEvent::PlayPacket { packet_id, payload } => {
                     let decoded = reference_play::decode_reference_play_packet(packet_id, &payload)
                         .map_err(|error| JsValue::from_str(&format!("reference play packet rejected: {error:?}")))?;
-                    if let reference_play::ReferencePlayPacket::PlayerPosition { teleport_id, .. } = decoded {
-                        let confirm_payload = encode_reference_varint(teleport_id);
-                        connection.send_play_packet(0x00, &confirm_payload)?;
+                    match &decoded {
+                        reference_play::ReferencePlayPacket::PlayerPosition { teleport_id, .. } => {
+                            let confirm_payload = encode_reference_varint(*teleport_id);
+                            connection.send_play_packet(0x00, &confirm_payload)?;
+                            LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
+                        }
+                        reference_play::ReferencePlayPacket::Login(_) => {
+                            LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
+                        }
+                        _ => {}
                     }
                     render::apply_reference_play_packet(packet_id, &payload)?;
                     processed = processed.saturating_add(1);
