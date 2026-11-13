@@ -25,6 +25,16 @@ struct SectionGpuMesh {
     vertex_count: i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlayerNetworkState {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub on_ground: bool,
+}
+
 struct Renderer {
     gl: Gl,
     program: WebGlProgram,
@@ -344,6 +354,83 @@ pub fn draw_frame() -> Result<(), JsValue> {
     })
 }
 
+
+/// Snapshot the local simulation state for the reference multiplayer movement pump.
+pub fn player_network_state() -> Option<PlayerNetworkState> {
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let renderer = borrowed.as_ref()?;
+        Some(PlayerNetworkState {
+            x: renderer.player.position.x,
+            y: renderer.player.position.y,
+            z: renderer.player.position.z,
+            yaw: renderer.camera_yaw,
+            pitch: renderer.camera_pitch,
+            on_ground: renderer.player.on_ground,
+        })
+    })
+}
+
+fn encode_reference_varint(value: i32, out: &mut Vec<u8>) {
+    let mut value = value as u32;
+    while value & !0x7f != 0 {
+        out.push((value as u8 & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    out.push(value as u8);
+}
+
+fn pack_reference_block_position(x: i32, y: i32, z: i32) -> i64 {
+    ((i64::from(x) & 0x3ff_ffff) << 38)
+        | ((i64::from(z) & 0x3ff_ffff) << 12)
+        | (i64::from(y) & 0xfff)
+}
+
+fn reference_face_id(face: [i32; 3]) -> u8 {
+    match face {
+        [0, -1, 0] => 0,
+        [0, 1, 0] => 1,
+        [0, 0, -1] => 2,
+        [0, 0, 1] => 3,
+        [-1, 0, 0] => 4,
+        [1, 0, 0] => 5,
+        _ => 1,
+    }
+}
+
+/// Build the audited reference Player Action payload for start/finish digging.
+pub fn server_dig_action_payload(status: i32) -> Option<Vec<u8>> {
+    if status != 0 && status != 1 && status != 2 { return None; }
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let renderer = borrowed.as_ref()?;
+        if !renderer.server_world_active { return None; }
+        let hit = current_target(renderer)?;
+        let mut payload = Vec::with_capacity(14);
+        encode_reference_varint(status, &mut payload);
+        payload.extend_from_slice(&pack_reference_block_position(
+            hit.position.x, hit.position.y, hit.position.z,
+        ).to_be_bytes());
+        payload.push(reference_face_id(hit.face));
+        Some(payload)
+    })
+}
+
+/// Build the audited reference Use Item On payload for the targeted block face.
+pub fn server_use_item_on_payload() -> Option<Vec<u8>> {
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let renderer = borrowed.as_ref()?;
+        if !renderer.server_world_active { return None; }
+        let hit = current_target(renderer)?;
+        let mut payload = Vec::with_capacity(9);
+        payload.extend_from_slice(&pack_reference_block_position(
+            hit.position.x, hit.position.y, hit.position.z,
+        ).to_be_bytes());
+        payload.push(reference_face_id(hit.face));
+        Some(payload)
+    })
+}
 
 /// Apply one decoded 26.1.2 reference play packet to the live renderer.
 ///
