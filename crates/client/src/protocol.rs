@@ -68,7 +68,7 @@ impl ProtocolSession {
         write_varint(&mut login_hello, 0); // no offline-profile properties
 
         self.state = ProtocolState::Login;
-        Ok(vec![encode_ws_packet(0x00, &handshake), encode_ws_packet(0x00, &login_hello)])
+        Ok(vec![handshake, encode_ws_packet(0x00, &login_hello)])
     }
 
     /// Process one complete server WebSocket message. Send events contain
