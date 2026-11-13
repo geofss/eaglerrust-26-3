@@ -323,7 +323,7 @@ mod tests {
             | ((-7_i64 & 0xfff) << 0)
             | ((3_i64 & 0x3ff_ffff) << 12);
         let mut writer = PacketWriter::new();
-        writer.write_i64_be(packed);
+        writer.write_bytes(&packed.to_be_bytes());
         writer.write_varint(42);
         assert_eq!(
             decode_reference_play_packet(REFERENCE_S2C_PLAY_BLOCK_UPDATE, &writer.into_bytes()).unwrap(),
@@ -346,9 +346,9 @@ mod tests {
         );
 
         let mut teleport = PacketWriter::new();
-        teleport.write_f64_be(1.5);
-        teleport.write_f64_be(72.0);
-        teleport.write_f64_be(-3.25);
+        teleport.write_bytes(&1.5_f64.to_bits().to_be_bytes());
+        teleport.write_bytes(&72.0_f64.to_bits().to_be_bytes());
+        teleport.write_bytes(&(-3.25_f64).to_bits().to_be_bytes());
         teleport.write_bytes(&30.0_f32.to_bits().to_be_bytes());
         teleport.write_bytes(&(-10.0_f32).to_bits().to_be_bytes());
         teleport.write_bytes(&[0]);
