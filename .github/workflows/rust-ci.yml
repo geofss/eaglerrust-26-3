@@ -1,0 +1,25 @@
+name: Rust protocol and WASM checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - systems/**
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Run workspace tests
+        run: cargo test --workspace
+      - name: Check browser WASM target
+        run: cargo check -p eaglerrust-client --target wasm32-unknown-unknown
