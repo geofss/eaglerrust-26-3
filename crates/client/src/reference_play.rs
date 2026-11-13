@@ -282,7 +282,7 @@ mod tests {
         let mut world = World::new();
         let packet = apply_reference_play_packet(&mut world, REFERENCE_S2C_PLAY_CHUNK, &writer.into_bytes()).unwrap();
         assert!(matches!(packet, ReferencePlayPacket::Chunk(_)));
-        assert_eq!(world.get_block(BlockPosition::new(-13, 0, 35)), BlockStateId(91));
+        assert_eq!(world.get_block(BlockPosition::new(-13, 0, 32)), BlockStateId(91));
     }
 
     #[test]
