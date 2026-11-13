@@ -403,14 +403,20 @@
       const disconnectButton = document.getElementById("disconnect-server");
       connectButton.addEventListener("click", () => {
         try {
-          const endpoint = document.getElementById("ws-url").value.trim();
+          const rawEndpoint = document.getElementById("ws-url").value.trim();
           const subprotocol = document.getElementById("ws-subprotocol").value.trim();
           const host = document.getElementById("server-host").value.trim();
           const port = Number(document.getElementById("server-port").value);
           const username = document.getElementById("server-username").value.trim();
-          if (!/^wss?:\/\//i.test(endpoint) || !subprotocol || !host || !Number.isInteger(port) || port < 1 || port > 65535) {
-            throw new Error("Enter a valid ws(s) endpoint, subprotocol, host, and port");
+          if (!rawEndpoint || !subprotocol || !host || !Number.isInteger(port) || port < 1 || port > 65535) {
+            throw new Error("Enter a server address, subprotocol, host, and valid port");
           }
+          // Browser deployments always use TLS: normalize bare hosts and upgrade URL schemes to WSS.
+          let endpoint = rawEndpoint;
+          if (/^https:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^https:/i, "wss:");
+          else if (/^http:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^http:/i, "wss:");
+          else if (/^ws:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^ws:/i, "wss:");
+          else if (!/^wss:\/\//i.test(endpoint)) endpoint = `wss://${endpoint}`;
           const uuid = crypto.randomUUID().replaceAll("-", "");
           connect_reference_server_with_protocol(endpoint, host, port, username, uuid, subprotocol);
           connectButton.disabled = true;
