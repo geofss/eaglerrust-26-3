@@ -502,6 +502,7 @@ pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(),
                 renderer.player.velocity = Vec3::default();
                 renderer.player.on_ground = false;
             }
+            crate::reference_play::ReferencePlayPacket::SetContainerSlot { .. } => {}
             crate::reference_play::ReferencePlayPacket::Unhandled { .. } => {}
         }
         Ok(())
