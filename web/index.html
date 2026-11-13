@@ -311,19 +311,13 @@
 
     <section class="connect-panel" aria-label="Experimental server connection">
       <h2>Experimental server connection</h2>
-      <p>Reference protocol 775 (26.1.2-derived). This is a development connector, not verified 26.3 compatibility. Use a server you control that speaks this reference format.</p>
+      <p>Eaglercraft V5 handshake · Minecraft protocol 777 (26.3 target). Standard EaglerXServer normally does not require an HTTP WebSocket subprotocol. Gameplay packet coverage is still under development.</p>
       <div class="connect-grid">
         <label>WebSocket endpoint
           <input id="ws-url" value="wss://" placeholder="wss://server.example/ws" autocomplete="url">
         </label>
-        <label>WebSocket subprotocol
-          <input id="ws-subprotocol" value="eaglercraft-26.3" placeholder="eaglercraft-26.3" autocomplete="off">
-        </label>
-        <label>Handshake host
-          <input id="server-host" placeholder="server.example" autocomplete="off">
-        </label>
-        <label>Server port
-          <input id="server-port" type="number" min="1" max="65535" value="25565" inputmode="numeric">
+        <label>Optional HTTP WebSocket subprotocol
+          <input id="ws-subprotocol" value="" placeholder="Leave blank for standard Eagler V5" autocomplete="off">
         </label>
         <label>Username
           <input id="server-username" value="RustPlayer" maxlength="16" autocomplete="nickname">
@@ -405,24 +399,25 @@
         try {
           const rawEndpoint = document.getElementById("ws-url").value.trim();
           const subprotocol = document.getElementById("ws-subprotocol").value.trim();
-          const host = document.getElementById("server-host").value.trim();
-          const port = Number(document.getElementById("server-port").value);
+          let host = "";
+          let port = 25565;
           const username = document.getElementById("server-username").value.trim();
-          if (!rawEndpoint || !subprotocol || !host || !Number.isInteger(port) || port < 1 || port > 65535) {
-            throw new Error("Enter a server address, subprotocol, host, and valid port");
-          }
+          if (!rawEndpoint) throw new Error("Enter a WebSocket server address");
           // Browser deployments always use TLS: normalize bare hosts and upgrade URL schemes to WSS.
           let endpoint = rawEndpoint;
           if (/^https:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^https:/i, "wss:");
           else if (/^http:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^http:/i, "wss:");
           else if (/^ws:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^ws:/i, "wss:");
           else if (!/^wss:\/\//i.test(endpoint)) endpoint = `wss://${endpoint}`;
+          const parsedEndpoint = new URL(endpoint);
+          host = parsedEndpoint.hostname;
+          if (parsedEndpoint.port) port = Number(parsedEndpoint.port);
           const uuid = crypto.randomUUID().replaceAll("-", "");
           connect_reference_server_with_protocol(endpoint, host, port, username, uuid, subprotocol);
           connectButton.disabled = true;
           disconnectButton.disabled = false;
           networkStatus.textContent = "Network: connecting…";
-          status.textContent = "Opening reference protocol connection…";
+          status.textContent = "Starting Eagler V5 handshake…";
         } catch (error) {
           networkStatus.textContent = `Network: ${error}`;
         }

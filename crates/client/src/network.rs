@@ -1,13 +1,14 @@
 //! Network transport lifecycle and packet codec exports.
 //!
-//! The browser adapter provides binary WebSocket transport plus a version-pinned
-//! 26.1.2 reference protocol driver. It does not claim 26.3 packet compatibility,
-//! encryption, or compression.
+//! The browser adapter provides binary WebSocket transport and an Eaglercraft V5
+//! application handshake. Minecraft configuration/play packet support remains
+//! version-sensitive; this transport does not implement encryption or compression.
 
 pub use crate::packet::{decode_packet_frame, encode_packet_frame, PacketError, PacketReader, PacketWriter};
 
-/// Default Eaglercraft 26.3 WebSocket subprotocol requested by the browser client.
-pub const DEFAULT_EAGLER_SUBPROTOCOL: &str = "eaglercraft-26.3";
+/// Standard EaglerXServer does not require an HTTP WebSocket subprotocol.
+/// The Eagler V5 application handshake is sent as the first binary message.
+pub const DEFAULT_EAGLER_SUBPROTOCOL: &str = "";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
@@ -33,13 +34,12 @@ mod browser {
     use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
 
     use super::ConnectionState;
-    use crate::protocol::{ProtocolEvent, ProtocolSession};
+    use crate::protocol::{EaglerV5Session, ProtocolEvent};
 
-    /// Browser transport connected to the audited 26.1.2 reference protocol.
-    /// This is a protocol driver, not a 26.3 compatibility claim.
+    /// Browser transport using the Eaglercraft V5 application handshake.
     pub struct BrowserProtocolConnection {
         transport: BrowserWebSocket,
-        protocol: ProtocolSession,
+        protocol: EaglerV5Session,
         pending_outbound: VecDeque<Vec<u8>>,
     }
 
@@ -62,15 +62,11 @@ mod browser {
             uuid: [u8; 16],
             subprotocol: &str,
         ) -> Result<Self, JsValue> {
-            let offered = if subprotocol == "eaglercraft" {
-                vec!["eaglercraft"]
-            } else if subprotocol == "eaglercraft-26.3" {
-                vec!["eaglercraft-26.3", "eaglercraft"]
-            } else {
-                vec![subprotocol, "eaglercraft"]
-            };
+            // HTTP subprotocol negotiation is optional and independent from Eagler V5.
+            // Standard EaglerXServer endpoints normally use no Sec-WebSocket-Protocol.
+            let offered = if subprotocol.is_empty() { Vec::new() } else { vec![subprotocol] };
             let transport = BrowserWebSocket::connect_with_subprotocols(url, &offered)?;
-            let mut protocol = ProtocolSession::new();
+            let mut protocol = EaglerV5Session::new();
             let pending_outbound = protocol
                 .begin_login(host, port, username, uuid)
                 .map_err(|error| JsValue::from_str(&format!("protocol setup failed: {error:?}")))?

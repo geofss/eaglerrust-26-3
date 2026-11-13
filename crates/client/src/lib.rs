@@ -169,8 +169,7 @@ fn send_reference_movement(
     Ok(())
 }
 
-/// Open the reference connector using the default Eagler subprotocol name.
-/// This remains a 26.1.2-derived protocol driver, not a 26.3 compatibility claim.
+/// Open a standard Eaglercraft V5 connection without an HTTP WebSocket subprotocol.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn connect_reference_server(
@@ -185,7 +184,7 @@ pub fn connect_reference_server(
     )
 }
 
-/// Open the reference connector while requesting an explicit WebSocket subprotocol.
+/// Open an Eaglercraft V5 connection, optionally requesting a separate HTTP WebSocket subprotocol.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn connect_reference_server_with_protocol(
@@ -198,9 +197,6 @@ pub fn connect_reference_server_with_protocol(
 ) -> Result<(), JsValue> {
     if uuid_hex.len() != 32 || !uuid_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(JsValue::from_str("UUID must contain exactly 32 hexadecimal characters"));
-    }
-    if subprotocol.is_empty() {
-        return Err(JsValue::from_str("WebSocket subprotocol cannot be empty"));
     }
     let mut uuid = [0_u8; 16];
     for (index, byte) in uuid.iter_mut().enumerate() {

@@ -63,7 +63,7 @@ The renderer generates a deterministic RGBA development atlas, uploads it as a W
 
 The browser page now exposes an experimental WebSocket connection panel. The Rust connection driver pumps complete binary WebSocket messages, advances the reference login/configuration state machine, and forwards play packets to the renderer. The current reference handlers cover Play Login, chunk columns, block updates, chunk unloads, player teleports (including teleport confirmation), container-slot updates for the hotbar, player movement, hotbar selection, dig start/abort/finish, and use-item-on.
 
-The browser connection panel requests `eaglercraft-26.3` first and offers `eaglercraft` as a generic fallback. It normalizes bare hosts and `http(s)://` or `ws://` inputs to secure `wss://` URLs. Negotiated protocol and extensions are captured on the browser WebSocket `open` event; the browser handles WebSocket framing and any negotiated permessage-deflate extension. The browser's `WebSocket.protocol` and `WebSocket.extensions` values are exposed as connection diagnostics. WebSocket framing and any negotiated `permessage-deflate` transport extension remain browser-managed; the Rust application receives complete binary message payloads. This does not implement Minecraft's separate packet-compression layer, nor does it prove that a particular server accepts the selected subprotocol.
+The browser normalizes bare hosts and `http(s)://` or `ws://` inputs to secure `wss://` URLs. Standard EaglerXServer connections do not request an HTTP WebSocket subprotocol by default: the Eagler V5 application handshake is sent as the first binary WebSocket message. An optional HTTP subprotocol can be supplied for a custom gateway. Negotiated protocol and extensions are captured on the browser WebSocket `open` event; WebSocket framing and negotiated permessage-deflate remain browser-managed.
 
 The 26.1.2 source uses a minimum overworld height of -64 and chunk section indices relative to that minimum; the adapter converts those section indices to the Rust world's absolute section coordinates. A small set of source-verified reference block IDs is translated into the prototype render/collision definitions. Unknown block states are preserved distinctly and use a fallback tile.
 
@@ -74,3 +74,18 @@ The renderer now drives mining while the desktop mouse or mobile BREAK control i
 The mining timer still uses the small prototype hardness registry. It does not yet model tools, game mode, effects, server-side mining speed, or the complete 26.3 packet definitions. The reference status values and packet ID remain 26.1.2-derived assumptions until checked against a real 26.3-compatible endpoint.
 
 **This is not yet a playable Eaglercraft 26.3 client.** The connection panel is only suitable for a server that speaks the exact reference gateway protocol. The project still needs a real end-to-end server test, full target-version packet/registry/chunk verification, original resource assets, broader gameplay systems, and runtime/browser validation.
+
+
+## Eagler V5 transport status
+
+The browser connector begins standard EaglerXServer sessions with the Eaglercraft V5
+application-level handshake (01 02 client-version frame), negotiates Eagler protocol 5
+and the Java 26.3 protocol baseline (777), performs the no-password login exchange, and
+sends the vanilla Login Acknowledged packet after synthesizing Login Success from the
+server-granted identity. This handshake is separate from the HTTP WebSocket subprotocol;
+the default is to offer no HTTP subprotocol, as standard EaglerXServer does not require one.
+
+The V5 login path currently offers no password, cookies, skin/cape profile data, or optional
+capabilities. Configuration/play packet identifiers and gameplay packet coverage still need
+independent 26.3 verification, and a real EaglerXServer join test is still required. A green
+unit/wasm build does not establish end-to-end server compatibility.
