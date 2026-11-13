@@ -30,6 +30,81 @@ mod browser {
     use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
 
     use super::ConnectionState;
+    use crate::protocol::{ProtocolEvent, ProtocolSession};
+
+    /// Browser transport connected to the audited 26.1.2 reference protocol.
+    /// This is a protocol driver, not a 26.3 compatibility claim.
+    pub struct BrowserProtocolConnection {
+        transport: BrowserWebSocket,
+        protocol: ProtocolSession,
+        pending_outbound: VecDeque<Vec<u8>>,
+    }
+
+    impl BrowserProtocolConnection {
+        pub fn connect(
+            url: &str,
+            host: &str,
+            port: u16,
+            username: &str,
+            uuid: [u8; 16],
+        ) -> Result<Self, JsValue> {
+            let transport = BrowserWebSocket::connect(url)?;
+            let mut protocol = ProtocolSession::new();
+            let pending_outbound = protocol
+                .begin_login(host, port, username, uuid)
+                .map_err(|error| JsValue::from_str(&format!("protocol setup failed: {error:?}")))?
+                .into();
+            Ok(Self { transport, protocol, pending_outbound })
+        }
+
+        pub fn protocol_state(&self) -> crate::protocol::ProtocolState {
+            self.protocol.state()
+        }
+
+        pub fn transport_state(&self) -> ConnectionState {
+            self.transport.state()
+        }
+
+        /// Flush queued handshake/config responses and process inbound packets.
+        /// Non-send protocol events are returned to the game layer.
+        pub fn tick(&mut self) -> Result<Vec<ProtocolEvent>, JsValue> {
+            self.flush_outbound()?;
+            let mut delivered = Vec::new();
+            while let Some(message) = self.transport.try_receive() {
+                let events = self.protocol.process_server_message(&message)
+                    .map_err(|error| JsValue::from_str(&format!("protocol packet rejected: {error:?}")))?;
+                for event in events {
+                    match event {
+                        ProtocolEvent::Send(bytes) => self.pending_outbound.push_back(bytes),
+                        other => delivered.push(other),
+                    }
+                }
+            }
+            self.flush_outbound()?;
+            Ok(delivered)
+        }
+
+        /// Send configuration bootstrap packets after Login Success.
+        pub fn send_configuration_bootstrap(&mut self) -> Result<(), JsValue> {
+            let packets = self.protocol.configuration_bootstrap()
+                .map_err(|error| JsValue::from_str(&format!("configuration is not ready: {error:?}")))?;
+            self.pending_outbound.extend(packets);
+            self.flush_outbound()
+        }
+
+        fn flush_outbound(&mut self) -> Result<(), JsValue> {
+            if self.transport.state() != ConnectionState::Connected {
+                return Ok(());
+            }
+            while let Some(message) = self.pending_outbound.pop_front() {
+                if let Err(error) = self.transport.send_binary(&message) {
+                    self.pending_outbound.push_front(message);
+                    return Err(error);
+                }
+            }
+            Ok(())
+        }
+    }
 
     const MAX_QUEUED_MESSAGES: usize = 1024;
     const MAX_QUEUED_BYTES: usize = 16 * 1024 * 1024;
@@ -185,4 +260,4 @@ mod browser {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use browser::BrowserWebSocket;
+pub use browser::{BrowserProtocolConnection, BrowserWebSocket};
