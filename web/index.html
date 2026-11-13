@@ -554,7 +554,8 @@
         try {
           const networkState = reference_connection_state();
           if (networkState !== "disconnected" && networkState !== "failed") {
-            tick_reference_network();
+            const receivedPackets = tick_reference_network();
+            if (receivedPackets > 0) refreshHotbar();
             networkStatus.textContent = `Network: ${networkState}`;
           } else if (networkState === "failed" || networkState === "disconnected") {
             if (connectButton.disabled) {
