@@ -23,3 +23,8 @@ jobs:
         run: cargo test --workspace
       - name: Check browser WASM target
         run: cargo check -p eaglerrust-client --target wasm32-unknown-unknown
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+      - name: Build browser package
+        working-directory: crates/client
+        run: wasm-pack build --target web --release --out-dir ../../web/pkg
