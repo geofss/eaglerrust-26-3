@@ -38,6 +38,7 @@ pub mod player;
 pub mod raycast;
 pub mod render;
 pub mod storage;
+pub mod singleplayer;
 pub mod world;
 
 #[cfg(test)]
@@ -326,6 +327,24 @@ pub fn disconnect_reference_server() {
     });
     LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
     render::disconnect_reference_world();
+}
+
+/// Create a new local singleplayer world from a numeric seed.
+#[wasm_bindgen]
+pub fn create_singleplayer_world(seed: u32) -> Result<(), JsValue> {
+    render::create_singleplayer_world(seed)
+}
+
+/// Encode the current local world and player state for browser persistence.
+#[wasm_bindgen]
+pub fn save_singleplayer_world() -> Result<Vec<u8>, JsValue> {
+    render::save_singleplayer_world()
+}
+
+/// Load and validate a local singleplayer save produced by this client.
+#[wasm_bindgen]
+pub fn load_singleplayer_world(bytes: &[u8]) -> Result<(), JsValue> {
+    render::load_singleplayer_world(bytes)
 }
 
 /// Apply a single complete 26.1.2 reference play packet to the live Rust world.
