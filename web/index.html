@@ -453,15 +453,34 @@
         }
       };
       canvas.addEventListener("mousedown", (event) => {
-        if (event.button === 0) performBreak();
+        if (event.button === 0) set_breaking(true);
         if (event.button === 2) performPlace();
       });
+      window.addEventListener("mouseup", (event) => {
+        if (event.button === 0) set_breaking(false);
+      });
+      canvas.addEventListener("mouseleave", () => set_breaking(false));
       canvas.addEventListener("contextmenu", (event) => event.preventDefault());
       document.querySelectorAll(".mobile-controls [data-action]").forEach((button) => {
-        button.addEventListener("click", () => {
-          if (button.dataset.action === "break") performBreak();
-          if (button.dataset.action === "place") performPlace();
-        });
+        if (button.dataset.action === "break") {
+          const press = (event) => {
+            event.preventDefault();
+            button.setPointerCapture?.(event.pointerId);
+            button.classList.add("is-pressed");
+            set_breaking(true);
+          };
+          const release = (event) => {
+            event.preventDefault();
+            button.classList.remove("is-pressed");
+            set_breaking(false);
+          };
+          button.addEventListener("pointerdown", press);
+          button.addEventListener("pointerup", release);
+          button.addEventListener("pointercancel", release);
+          button.addEventListener("lostpointercapture", release);
+        } else if (button.dataset.action === "place") {
+          button.addEventListener("click", performPlace);
+        }
       });
 
       window.addEventListener("keydown", (event) => {
@@ -484,6 +503,7 @@
         }
       });
       window.addEventListener("blur", () => {
+        set_breaking(false);
         for (const key of movementKeys) set_key(key, false);
         document.querySelectorAll(".mobile-controls button.is-pressed").forEach((button) => {
           button.classList.remove("is-pressed");
@@ -572,7 +592,10 @@
         draw_frame();
         if (++statusFrame % 30 === 0) {
           const target = target_block_state();
-          if (target) status.textContent = `Target block ID: ${target} · left-click break · right-click place`;
+          const progress = mining_progress();
+          if (target) status.textContent = progress > 0
+            ? `Mining block ${target} · ${Math.round(progress * 100)}%`
+            : `Target block ID: ${target} · hold left-click to break · right-click to place`;
         }
         requestAnimationFrame(frame);
       };
