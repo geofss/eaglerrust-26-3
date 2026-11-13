@@ -7,6 +7,10 @@
 //! length prefix. Keep this codec distinct from stream framing.
 
 const REFERENCE_PROTOCOL_VERSION: i32 = 775;
+
+/// Vanilla Java Edition 26.3 protocol baseline. This does not by itself
+/// establish Eaglercraft 26.3 WebSocket-extension compatibility.
+pub const JAVA_26_3_PROTOCOL_VERSION: i32 = 777;
 const MAX_HOST_BYTES: usize = 255;
 const MAX_USERNAME_BYTES: usize = 16;
 
@@ -56,11 +60,7 @@ impl ProtocolSession {
             || !username.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
         { return Err(ProtocolError::InvalidUsername); }
 
-        let mut handshake = Vec::with_capacity(host.len() + 16);
-        write_varint(&mut handshake, REFERENCE_PROTOCOL_VERSION);
-        write_string(&mut handshake, host);
-        handshake.extend_from_slice(&port.to_be_bytes());
-        write_varint(&mut handshake, 2); // next state: LOGIN
+        let handshake = encode_handshake_message(REFERENCE_PROTOCOL_VERSION, host, port)?;
 
         let mut login_hello = Vec::with_capacity(32);
         login_hello.extend_from_slice(&uuid);
@@ -172,6 +172,35 @@ fn brand_plugin_message() -> Vec<u8> {
     encode_ws_packet(0x01, &payload)
 }
 
+/// Encode the vanilla Java Edition 26.3 handshake packet (protocol 777).
+///
+/// This only constructs the vanilla handshake message. Eaglercraft-specific
+/// WebSocket bootstrap, subprotocol negotiation, login packet layouts, and
+/// later state transitions must be verified separately before using it live.
+pub fn encode_java_26_3_handshake(host: &str, port: u16) -> Result<Vec<u8>, ProtocolError> {
+    encode_handshake_message(JAVA_26_3_PROTOCOL_VERSION, host, port)
+}
+
+fn encode_handshake_message(
+    protocol_version: i32,
+    host: &str,
+    port: u16,
+) -> Result<Vec<u8>, ProtocolError> {
+    if host.is_empty() || host.len() > MAX_HOST_BYTES || host.bytes().any(|b| b == 0) {
+        return Err(ProtocolError::InvalidHost);
+    }
+    if port == 0 {
+        return Err(ProtocolError::InvalidPort);
+    }
+
+    let mut payload = Vec::with_capacity(host.len() + 16);
+    write_varint(&mut payload, protocol_version);
+    write_string(&mut payload, host);
+    payload.extend_from_slice(&port.to_be_bytes());
+    write_varint(&mut payload, 2); // next state: LOGIN
+    Ok(encode_ws_packet(0x00, &payload))
+}
+
 /// Encode one 26.1.2-style WebSocket packet. No outer length prefix is added.
 pub fn encode_ws_packet(packet_id: i32, payload: &[u8]) -> Vec<u8> {
     let mut message = Vec::with_capacity(5 + payload.len());
@@ -237,6 +266,28 @@ mod tests {
         assert_eq!((id(&packets[0]), id(&packets[1])), (0, 0));
         let (_, handshake) = decode_ws_packet(&packets[0]).unwrap();
         assert_eq!(&handshake[..2], &[0x87, 0x06]); // protocol 775
+    }
+
+    #[test]
+    fn java_26_3_handshake_uses_protocol_777_without_claiming_eagler_bootstrap() {
+        let message = encode_java_26_3_handshake("8b4t.org", 25565).unwrap();
+        let (packet_id, payload) = decode_ws_packet(&message).unwrap();
+        assert_eq!(packet_id, 0x00);
+
+        let (version, used) = read_varint(payload).unwrap();
+        assert_eq!(version, JAVA_26_3_PROTOCOL_VERSION);
+        assert_eq!(version, 777);
+
+        let host_len = skip_utf8_string(&payload[used..]).unwrap();
+        let port_offset = used + host_len;
+        assert_eq!(&payload[port_offset..port_offset + 2], &25565_u16.to_be_bytes());
+        assert_eq!(payload[port_offset + 2], 2); // LOGIN state
+    }
+
+    #[test]
+    fn java_26_3_handshake_rejects_invalid_host_and_port() {
+        assert_eq!(encode_java_26_3_handshake("", 25565), Err(ProtocolError::InvalidHost));
+        assert_eq!(encode_java_26_3_handshake("host", 0), Err(ProtocolError::InvalidPort));
     }
 
     #[test]
