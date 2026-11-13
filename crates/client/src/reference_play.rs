@@ -44,6 +44,7 @@ pub enum ReferencePlayPacket {
         x: f64, y: f64, z: f64, yaw: f32, pitch: f32,
         relative_flags: u8, teleport_id: i32,
     },
+    SetContainerSlot { window: u8, slot: i16, item_id: i32, count: i32 },
     Unhandled { packet_id: i32, payload: Vec<u8> },
 }
 
@@ -56,6 +57,7 @@ pub enum ReferencePlayPacketError {
     InvalidViewDistance(i32),
     InvalidBlockStateId(i32),
     InvalidTeleportId(i32),
+    InvalidInventoryValue(i32),
     TrailingBytes(usize),
     Chunk(ReferenceChunkPacketError),
 }
@@ -93,6 +95,10 @@ impl<'a> Reader<'a> {
 
     fn i32(&mut self) -> Result<i32, ReferencePlayPacketError> {
         Ok(i32::from_be_bytes(self.read(4)?.try_into().map_err(|_| ReferencePlayPacketError::Truncated)?))
+    }
+
+    fn i16(&mut self) -> Result<i16, ReferencePlayPacketError> {
+        Ok(i16::from_be_bytes(self.read(2)?.try_into().map_err(|_| ReferencePlayPacketError::Truncated)?))
     }
 
     fn i64(&mut self) -> Result<i64, ReferencePlayPacketError> {
@@ -262,6 +268,17 @@ pub fn decode_reference_play_packet(
             Ok(ReferencePlayPacket::PlayerPosition {
                 x, y, z, yaw, pitch, relative_flags, teleport_id,
             })
+        }
+        0x0e => {
+            let mut reader = Reader::new(payload);
+            let window = reader.u8()?;
+            let slot = reader.i16()?;
+            let item_id = reader.varint()?;
+            let count = reader.varint()?;
+            if item_id < 0 { return Err(ReferencePlayPacketError::InvalidInventoryValue(item_id)); }
+            if count < 0 || count > 255 { return Err(ReferencePlayPacketError::InvalidInventoryValue(count)); }
+            reader.finish()?;
+            Ok(ReferencePlayPacket::SetContainerSlot { window, slot, item_id, count })
         }
         _ => Ok(ReferencePlayPacket::Unhandled { packet_id, payload: payload.to_vec() }),
     }
