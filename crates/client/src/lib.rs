@@ -207,6 +207,18 @@ pub fn tick_reference_network() -> Result<u32, JsValue> {
                         }
                         reference_play::ReferencePlayPacket::Login(_) => {
                             LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
+                            BROWSER_HOTBAR.with(|hotbar| hotbar.borrow_mut().clear());
+                        }
+                        reference_play::ReferencePlayPacket::SetContainerSlot {
+                            window, slot, item_id, count,
+                        } if *window == 0 && (0..9).contains(slot) => {
+                            BROWSER_HOTBAR.with(|hotbar| {
+                                hotbar.borrow_mut().set_slot(
+                                    *slot as usize,
+                                    BlockStateId(*item_id as u32),
+                                    *count as u8,
+                                );
+                            });
                         }
                         _ => {}
                     }
