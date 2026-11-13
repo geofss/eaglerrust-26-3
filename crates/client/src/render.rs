@@ -474,6 +474,22 @@ fn reference_face_id(face: [i32; 3]) -> u8 {
     }
 }
 
+/// Pure encoder for the reference Player Action payload used by dig lifecycle tests.
+fn encode_reference_dig_action(
+    status: i32,
+    position: BlockPosition,
+    face: [i32; 3],
+) -> Option<Vec<u8>> {
+    if status != 0 && status != 1 && status != 2 { return None; }
+    let mut payload = Vec::with_capacity(10);
+    encode_reference_varint(status, &mut payload);
+    payload.extend_from_slice(&pack_reference_block_position(
+        position.x, position.y, position.z,
+    ).to_be_bytes());
+    payload.push(reference_face_id(face));
+    Some(payload)
+}
+
 /// Build a reference Player Action payload for a specific captured dig target.
 /// Status values 0/1/2 are reference-protocol assumptions, not 26.3-verified.
 pub fn server_dig_action_payload_at(
@@ -481,18 +497,11 @@ pub fn server_dig_action_payload_at(
     position: BlockPosition,
     face: [i32; 3],
 ) -> Option<Vec<u8>> {
-    if status != 0 && status != 1 && status != 2 { return None; }
     RENDERER.with(|slot| {
         let borrowed = slot.borrow();
         let renderer = borrowed.as_ref()?;
         if !renderer.server_world_active { return None; }
-        let mut payload = Vec::with_capacity(14);
-        encode_reference_varint(status, &mut payload);
-        payload.extend_from_slice(&pack_reference_block_position(
-            position.x, position.y, position.z,
-        ).to_be_bytes());
-        payload.push(reference_face_id(face));
-        Some(payload)
+        encode_reference_dig_action(status, position, face)
     })
 }
 
@@ -1017,5 +1026,23 @@ mod tests {
         let world = World::new();
         let mesh = build_world_section_mesh(&world, SectionPosition::new(0, 0, 0));
         assert!(mesh.is_empty());
+    }
+
+    #[test]
+    fn reference_dig_payload_encodes_each_lifecycle_status() {
+        let position = BlockPosition::new(-2, 64, 3);
+        for status in 0..=2 {
+            let payload = super::encode_reference_dig_action(status, position, [0, 1, 0]).unwrap();
+            assert_eq!(payload.len(), 10);
+            assert_eq!(payload[0], status as u8);
+            assert_eq!(payload[9], 1, "up face maps to reference face 1");
+        }
+    }
+
+    #[test]
+    fn reference_dig_payload_rejects_unknown_status() {
+        assert!(super::encode_reference_dig_action(
+            3, BlockPosition::new(0, 0, 0), [0, 1, 0]
+        ).is_none());
     }
 }
