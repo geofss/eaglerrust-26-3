@@ -181,7 +181,7 @@ pub fn connect_reference_server(
     uuid_hex: &str,
 ) -> Result<(), JsValue> {
     connect_reference_server_with_protocol(
-        websocket_url, host, port, username, uuid_hex, "eaglercraft",
+        websocket_url, host, port, username, uuid_hex, network::DEFAULT_EAGLER_SUBPROTOCOL,
     )
 }
 
