@@ -167,6 +167,14 @@ pub fn decode_reference_play_login(
     })
 }
 
+/// The supplied 26.1.2 ClientLevel stores chunk section Y relative to
+/// the overworld minimum height (-64), so wire section 0 is world section -4.
+pub const REFERENCE_OVERWORLD_MIN_Y: i32 = -64;
+
+pub fn reference_section_y_to_world(section_y: i8) -> i32 {
+    REFERENCE_OVERWORLD_MIN_Y.div_euclid(16) + i32::from(section_y)
+}
+
 /// Translate the small set of 26.1.2 reference registry IDs for which
 /// this prototype currently has matching render/collision definitions.
 /// Unknown server states remain distinct and render with the unknown fallback.
@@ -271,7 +279,7 @@ pub fn apply_reference_play_packet(
         ReferencePlayPacket::Chunk(chunk) => {
             for section in &chunk.sections {
                 world.replace_section(
-                    SectionPosition::new(chunk.chunk_x, i32::from(section.section_y), chunk.chunk_z),
+                    SectionPosition::new(chunk.chunk_x, reference_section_y_to_world(section.section_y), chunk.chunk_z),
                     section.data.clone(),
                 );
             }
@@ -431,7 +439,7 @@ mod tests {
         let mut world = World::new();
         let packet = apply_reference_play_packet(&mut world, REFERENCE_S2C_PLAY_CHUNK, &writer.into_bytes()).unwrap();
         assert!(matches!(packet, ReferencePlayPacket::Chunk(_)));
-        assert_eq!(world.get_block(BlockPosition::new(-13, 0, 32)), map_reference_block_state(BlockStateId(91)));
+        assert_eq!(world.get_block(BlockPosition::new(-13, -64, 32)), map_reference_block_state(BlockStateId(91)));
     }
 
     #[test]
