@@ -552,6 +552,11 @@ pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(),
                 }
                 renderer.world = World::new();
                 renderer.server_world_active = true;
+                renderer.breaking_held = false;
+                renderer.mining.reset();
+                renderer.active_dig = None;
+                renderer.completed_dig = None;
+                renderer.pending_dig_actions.clear();
                 renderer.player.position = Vec3::new(login.spawn_x, login.spawn_y, login.spawn_z);
             }
             crate::reference_play::ReferencePlayPacket::Chunk(chunk) => {
