@@ -62,7 +62,14 @@ mod browser {
             uuid: [u8; 16],
             subprotocol: &str,
         ) -> Result<Self, JsValue> {
-            let transport = BrowserWebSocket::connect_with_subprotocol(url, Some(subprotocol))?;
+            let offered = if subprotocol == "eaglercraft" {
+                vec!["eaglercraft"]
+            } else if subprotocol == "eaglercraft-26.3" {
+                vec!["eaglercraft-26.3", "eaglercraft"]
+            } else {
+                vec![subprotocol, "eaglercraft"]
+            };
+            let transport = BrowserWebSocket::connect_with_subprotocols(url, &offered)?;
             let mut protocol = ProtocolSession::new();
             let pending_outbound = protocol
                 .begin_login(host, port, username, uuid)
@@ -142,6 +149,8 @@ mod browser {
         incoming: VecDeque<Vec<u8>>,
         queued_bytes: usize,
         transport_error: bool,
+        negotiated_protocol: String,
+        negotiated_extensions: String,
     }
 
     /// Browser-owned binary WebSocket connection.
@@ -160,20 +169,25 @@ mod browser {
     impl BrowserWebSocket {
         /// Open a WebSocket without requesting a subprotocol.
         pub fn connect(url: &str) -> Result<Self, JsValue> {
-            Self::connect_with_subprotocol(url, None)
+            Self::connect_with_subprotocols(url, &[])
         }
 
-        /// Open a WebSocket and request one subprotocol through the browser API.
-        pub fn connect_with_subprotocol(url: &str, subprotocol: Option<&str>) -> Result<Self, JsValue> {
-            let socket = if let Some(protocol) = subprotocol {
-                if protocol.is_empty() {
-                    return Err(JsValue::from_str("WebSocket subprotocol cannot be empty"));
-                }
-                let protocols = Array::new();
-                protocols.push(&JsValue::from_str(protocol));
-                WebSocket::new_with_str_sequence(url, protocols.as_ref())?
-            } else {
+        /// Open a WebSocket and offer protocols in preference order.
+        pub fn connect_with_subprotocols(url: &str, subprotocols: &[&str]) -> Result<Self, JsValue> {
+            let socket = if subprotocols.is_empty() {
                 WebSocket::new(url)?
+            } else {
+                let protocols = Array::new();
+                for protocol in subprotocols {
+                    if protocol.is_empty() {
+                        return Err(JsValue::from_str("WebSocket subprotocol cannot be empty"));
+                    }
+                    if subprotocols.iter().filter(|candidate| *candidate == protocol).count() > 1 {
+                        return Err(JsValue::from_str("WebSocket subprotocol list contains duplicates"));
+                    }
+                    protocols.push(&JsValue::from_str(protocol));
+                }
+                WebSocket::new_with_str_sequence(url, protocols.as_ref())?
             };
             socket.set_binary_type(BinaryType::Arraybuffer);
 
@@ -183,10 +197,14 @@ mod browser {
             }));
 
             let open_state = Rc::clone(&shared);
+            let open_socket = socket.clone();
             let on_open = Closure::wrap(Box::new(move |_event: Event| {
                 let mut state = open_state.borrow_mut();
                 if state.state == ConnectionState::Connecting {
                     state.state = ConnectionState::Connected;
+                    // These properties are authoritative only after the open event.
+                    state.negotiated_protocol = open_socket.protocol();
+                    state.negotiated_extensions = open_socket.extensions();
                 }
             }) as Box<dyn FnMut(Event)>);
             socket.set_onopen(Some(on_open.as_ref().unchecked_ref()));
@@ -256,11 +274,11 @@ mod browser {
         }
 
         pub fn negotiated_protocol(&self) -> String {
-            self.socket.protocol()
+            self.shared.borrow().negotiated_protocol.clone()
         }
 
         pub fn negotiated_extensions(&self) -> String {
-            self.socket.extensions()
+            self.shared.borrow().negotiated_extensions.clone()
         }
 
         /// Send one complete binary message when the socket is open.
