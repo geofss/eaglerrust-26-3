@@ -366,6 +366,25 @@ mod tests {
     }
 
     #[test]
+    fn maps_verified_reference_block_ids_and_unknown_fallbacks() {
+        assert_eq!(map_reference_block_state(BlockStateId(0)), AIR);
+        assert_eq!(map_reference_block_state(BlockStateId(1)), STONE);
+        assert_eq!(map_reference_block_state(BlockStateId(9)), GRASS_BLOCK);
+        assert_eq!(map_reference_block_state(BlockStateId(10)), DIRT);
+        assert_eq!(map_reference_block_state(BlockStateId(345)), SAND);
+        assert_eq!(map_reference_block_state(BlockStateId(351)), LOG);
+        assert_eq!(map_reference_block_state(BlockStateId(359)), LEAVES);
+        assert_eq!(map_reference_block_state(BlockStateId(777)), BlockStateId(0x8000_0309));
+    }
+
+    #[test]
+    fn reference_section_indices_are_offset_from_overworld_minimum_height() {
+        assert_eq!(reference_section_y_to_world(0), -4);
+        assert_eq!(reference_section_y_to_world(4), 0);
+        assert_eq!(reference_section_y_to_world(23), 19);
+    }
+
+    #[test]
     fn decodes_server_block_update_and_negative_coordinates() {
         use crate::packet::PacketWriter;
         let packed = ((-2_i64 & 0x3ff_ffff) << 38)
