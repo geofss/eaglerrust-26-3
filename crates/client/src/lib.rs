@@ -26,6 +26,7 @@ pub mod inventory;
 pub mod network;
 pub mod physics;
 pub mod packet;
+pub mod protocol;
 pub mod player;
 pub mod raycast;
 pub mod render;
