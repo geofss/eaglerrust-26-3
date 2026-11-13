@@ -352,7 +352,9 @@
       connect_reference_server,
       tick_reference_network,
       reference_connection_state,
-      disconnect_reference_server
+      disconnect_reference_server,
+      server_break_target,
+      server_place_target
     } from "./pkg/eaglerrust_client.js";
 
     const status = document.querySelector("#status");
@@ -420,18 +422,34 @@
       });
 
       const performBreak = () => {
-        if (break_target()) {
-          status.textContent = "Block broken · world mesh refreshed";
-        } else {
-          status.textContent = "No breakable block in reach";
+        try {
+          if (reference_connection_state() === "connected") {
+            status.textContent = server_break_target()
+              ? "Dig action sent · waiting for server block update"
+              : "No server block targeted";
+          } else {
+            status.textContent = break_target()
+              ? "Local block broken · world mesh refreshed"
+              : "No breakable block in reach";
+          }
+        } catch (error) {
+          status.textContent = `Break action failed: ${error}`;
         }
       };
       const performPlace = () => {
-        if (place_target()) {
-          refreshHotbar();
-          status.textContent = "Block placed · hotbar updated";
-        } else {
-          status.textContent = "Cannot place there · aim at a block and select a stack";
+        try {
+          if (reference_connection_state() === "connected") {
+            status.textContent = server_place_target()
+              ? "Use-item action sent · waiting for server block update"
+              : "No server block targeted";
+          } else if (place_target()) {
+            refreshHotbar();
+            status.textContent = "Local block placed · hotbar updated";
+          } else {
+            status.textContent = "Cannot place there · aim at a block and select a stack";
+          }
+        } catch (error) {
+          status.textContent = `Place action failed: ${error}`;
         }
       };
       canvas.addEventListener("mousedown", (event) => {
