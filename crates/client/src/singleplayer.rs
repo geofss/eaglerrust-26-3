@@ -121,16 +121,16 @@ mod tests {
 
     #[test]
     fn rejects_corrupt_save_headers_and_lengths() {
-        assert_eq!(SingleplayerSave::decode(b"ER"), Err(SingleplayerSaveError::Truncated));
+        assert!(matches!(SingleplayerSave::decode(b"ER"), Err(SingleplayerSaveError::Truncated)));
         let mut bytes = SingleplayerSave {
             seed: 1, player_position: [0.0; 3], yaw: 0.0, pitch: 0.0, world: World::new(),
         }.encode().unwrap();
         bytes[0] = b'X';
-        assert_eq!(SingleplayerSave::decode(&bytes), Err(SingleplayerSaveError::InvalidMagic));
+        assert!(matches!(SingleplayerSave::decode(&bytes), Err(SingleplayerSaveError::InvalidMagic)));
         let mut bytes = SingleplayerSave {
             seed: 1, player_position: [0.0; 3], yaw: 0.0, pitch: 0.0, world: World::new(),
         }.encode().unwrap();
         bytes.push(0);
-        assert_eq!(SingleplayerSave::decode(&bytes), Err(SingleplayerSaveError::InvalidLength));
+        assert!(matches!(SingleplayerSave::decode(&bytes), Err(SingleplayerSaveError::InvalidLength)));
     }
 }
