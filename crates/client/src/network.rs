@@ -25,7 +25,7 @@ mod browser {
     use std::collections::VecDeque;
     use std::rc::Rc;
 
-    use js_sys::{ArrayBuffer, Uint8Array};
+    use js_sys::{Array, ArrayBuffer, Uint8Array};
     use wasm_bindgen::{closure::Closure, JsCast, JsValue};
     use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
 
@@ -48,7 +48,18 @@ mod browser {
             username: &str,
             uuid: [u8; 16],
         ) -> Result<Self, JsValue> {
-            let transport = BrowserWebSocket::connect(url)?;
+            Self::connect_with_subprotocol(url, host, port, username, uuid, "eaglercraft")
+        }
+
+        pub fn connect_with_subprotocol(
+            url: &str,
+            host: &str,
+            port: u16,
+            username: &str,
+            uuid: [u8; 16],
+            subprotocol: &str,
+        ) -> Result<Self, JsValue> {
+            let transport = BrowserWebSocket::connect_with_subprotocol(url, Some(subprotocol))?;
             let mut protocol = ProtocolSession::new();
             let pending_outbound = protocol
                 .begin_login(host, port, username, uuid)
@@ -63,6 +74,14 @@ mod browser {
 
         pub fn transport_state(&self) -> ConnectionState {
             self.transport.state()
+        }
+
+        pub fn negotiated_protocol(&self) -> String {
+            self.transport.negotiated_protocol()
+        }
+
+        pub fn negotiated_extensions(&self) -> String {
+            self.transport.negotiated_extensions()
         }
 
         pub fn close(&self) -> Result<(), JsValue> {
@@ -136,9 +155,23 @@ mod browser {
     }
 
     impl BrowserWebSocket {
-        /// Open a WebSocket and configure it to receive binary ArrayBuffers.
+        /// Open a WebSocket without requesting a subprotocol.
         pub fn connect(url: &str) -> Result<Self, JsValue> {
-            let socket = WebSocket::new(url)?;
+            Self::connect_with_subprotocol(url, None)
+        }
+
+        /// Open a WebSocket and request one subprotocol through the browser API.
+        pub fn connect_with_subprotocol(url: &str, subprotocol: Option<&str>) -> Result<Self, JsValue> {
+            let socket = if let Some(protocol) = subprotocol {
+                if protocol.is_empty() {
+                    return Err(JsValue::from_str("WebSocket subprotocol cannot be empty"));
+                }
+                let protocols = Array::new();
+                protocols.push(&JsValue::from_str(protocol));
+                WebSocket::new_with_str_sequence(url, &protocols)?
+            } else {
+                WebSocket::new(url)?
+            };
             socket.set_binary_type(BinaryType::Arraybuffer);
 
             let shared = Rc::new(RefCell::new(SharedState {
@@ -217,6 +250,14 @@ mod browser {
 
         pub fn has_transport_error(&self) -> bool {
             self.shared.borrow().transport_error
+        }
+
+        pub fn negotiated_protocol(&self) -> String {
+            self.socket.protocol()
+        }
+
+        pub fn negotiated_extensions(&self) -> String {
+            self.socket.extensions()
         }
 
         /// Send one complete binary message when the socket is open.
