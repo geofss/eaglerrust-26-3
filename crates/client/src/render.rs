@@ -18,6 +18,8 @@ use web_sys::{
     WebGlShader, WebGlTexture, WebGlUniformLocation,
 };
 
+const TERRAIN_VERTEX_FLOATS: usize = 8;
+
 struct SectionGpuMesh {
     buffer: WebGlBuffer,
     vertex_count: i32,
@@ -413,6 +415,11 @@ fn block_outline_mesh(position: BlockPosition, atlas: TextureAtlasLayout) -> Vec
     vertices
 }
 
+fn mesh_vertex_count(vertices: &[f32]) -> i32 {
+    debug_assert_eq!(vertices.len() % TERRAIN_VERTEX_FLOATS, 0);
+    (vertices.len() / TERRAIN_VERTEX_FLOATS) as i32
+}
+
 fn build_section_gpu_meshes(gl: &Gl, world: &World, atlas_layout: TextureAtlasLayout) -> Result<HashMap<SectionPosition, SectionGpuMesh>, JsValue> {
     let mut meshes = HashMap::new();
     for section in world.loaded_sections() {
@@ -422,7 +429,7 @@ fn build_section_gpu_meshes(gl: &Gl, world: &World, atlas_layout: TextureAtlasLa
         let data = Float32Array::from(vertices.as_slice());
         gl.bind_buffer(Gl::ARRAY_BUFFER, Some(&buffer));
         gl.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &data, Gl::STATIC_DRAW);
-        meshes.insert(section, SectionGpuMesh { buffer, vertex_count: (vertices.len() / 6) as i32 });
+        meshes.insert(section, SectionGpuMesh { buffer, vertex_count: mesh_vertex_count(&vertices) });
     }
     Ok(meshes)
 }
@@ -454,7 +461,7 @@ fn update_dirty_section_meshes(renderer: &mut Renderer) -> bool {
         renderer.gl.buffer_data_with_array_buffer_view(Gl::ARRAY_BUFFER, &data, Gl::DYNAMIC_DRAW);
         renderer.section_meshes.insert(section, SectionGpuMesh {
             buffer,
-            vertex_count: (vertices.len() / 6) as i32,
+            vertex_count: mesh_vertex_count(&vertices),
         });
     }
     let unloaded: Vec<_> = renderer.section_meshes.keys().copied()
@@ -705,8 +712,14 @@ fn normalize(vector: [f32; 3]) -> [f32; 3] {
 
 #[cfg(test)]
 mod tests {
-    use super::{block_face_tiles, build_terrain_mesh, build_world_section_mesh};
+    use super::{block_face_tiles, build_terrain_mesh, build_world_section_mesh, mesh_vertex_count};
     use crate::world::{BlockPosition, BlockStateId, SectionPosition, World};
+
+    #[test]
+    fn gpu_vertex_count_uses_position_color_and_uv_stride() {
+        let vertices = vec![0.0; 8 * 6];
+        assert_eq!(mesh_vertex_count(&vertices), 6);
+    }
 
     #[test]
     fn voxel_mesh_has_complete_triangle_vertices() {
