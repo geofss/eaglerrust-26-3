@@ -228,6 +228,34 @@
     #status { color: #b7d9f8; }
     .hint { text-align: right; }
 
+    .connect-panel {
+      margin-top: 14px;
+      padding: 16px;
+      border: 1px solid #26364d;
+      border-radius: 14px;
+      background: #0d1726;
+    }
+    .connect-panel h2 { margin: 0 0 6px; font-size: 1rem; }
+    .connect-panel p { margin: 0 0 12px; color: #91a4bd; font-size: .8rem; line-height: 1.5; }
+    .connect-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 9px; }
+    .connect-grid label { display: grid; gap: 5px; color: #9eb1c9; font-size: .72rem; }
+    .connect-grid input {
+      width: 100%; min-width: 0; padding: 10px;
+      border: 1px solid #344a63; border-radius: 8px;
+      background: #08111d; color: #edf2ff; font: inherit;
+    }
+    .connect-actions { display: flex; gap: 8px; margin-top: 10px; }
+    .connect-actions button {
+      padding: 9px 13px; border: 1px solid #42658a; border-radius: 8px;
+      background: #183452; color: #edf6ff; font-weight: 650;
+    }
+    .connect-actions button:disabled { opacity: .5; }
+    #network-status { margin-top: 9px; color: #9fc8ef; font: .72rem ui-monospace, monospace; }
+    @media (max-width: 600px) {
+      .connect-grid { grid-template-columns: 1fr 1fr; }
+      .connect-grid label:first-child { grid-column: 1 / -1; }
+    }
+
     @media (max-width: 600px) {
       body { padding: 14px; }
       .pill { display: none; }
@@ -280,6 +308,30 @@
         <div class="hint">WASD or touch pad · drag to look · jump · break/place</div>
       </div>
     </section>
+
+    <section class="connect-panel" aria-label="Experimental server connection">
+      <h2>Experimental server connection</h2>
+      <p>Reference protocol 775 (26.1.2-derived). This is a development connector, not verified 26.3 compatibility. Use a server you control that speaks this reference format.</p>
+      <div class="connect-grid">
+        <label>WebSocket endpoint
+          <input id="ws-url" value="wss://" placeholder="wss://server.example/ws" autocomplete="url">
+        </label>
+        <label>Handshake host
+          <input id="server-host" placeholder="server.example" autocomplete="off">
+        </label>
+        <label>Server port
+          <input id="server-port" type="number" min="1" max="65535" value="25565" inputmode="numeric">
+        </label>
+        <label>Username
+          <input id="server-username" value="RustPlayer" maxlength="16" autocomplete="nickname">
+        </label>
+      </div>
+      <div class="connect-actions">
+        <button id="connect-server" type="button">Connect</button>
+        <button id="disconnect-server" type="button" disabled>Disconnect</button>
+      </div>
+      <div id="network-status" role="status">Network: disconnected</div>
+    </section>
   </main>
 
   <script type="module">
@@ -296,7 +348,11 @@
       hotbar_count,
       break_target,
       place_target,
-      target_block_state
+      target_block_state,
+      connect_reference_server,
+      tick_reference_network,
+      reference_connection_state,
+      disconnect_reference_server
     } from "./pkg/eaglerrust_client.js";
 
     const status = document.querySelector("#status");
@@ -333,6 +389,35 @@
         });
       }
       refreshHotbar();
+
+      const networkStatus = document.getElementById("network-status");
+      const connectButton = document.getElementById("connect-server");
+      const disconnectButton = document.getElementById("disconnect-server");
+      connectButton.addEventListener("click", () => {
+        try {
+          const endpoint = document.getElementById("ws-url").value.trim();
+          const host = document.getElementById("server-host").value.trim();
+          const port = Number(document.getElementById("server-port").value);
+          const username = document.getElementById("server-username").value.trim();
+          if (!/^wss?:\\/\\//i.test(endpoint) || !host || !Number.isInteger(port) || port < 1 || port > 65535) {
+            throw new Error("Enter a valid ws(s) endpoint, host, and port");
+          }
+          const uuid = crypto.randomUUID().replaceAll("-", "");
+          connect_reference_server(endpoint, host, port, username, uuid);
+          connectButton.disabled = true;
+          disconnectButton.disabled = false;
+          networkStatus.textContent = "Network: connecting…";
+          status.textContent = "Opening reference protocol connection…";
+        } catch (error) {
+          networkStatus.textContent = `Network: ${error}`;
+        }
+      });
+      disconnectButton.addEventListener("click", () => {
+        disconnect_reference_server();
+        connectButton.disabled = false;
+        disconnectButton.disabled = true;
+        networkStatus.textContent = "Network: disconnected";
+      });
 
       const performBreak = () => {
         if (break_target()) {
@@ -448,6 +533,17 @@
 
       let statusFrame = 0;
       const frame = () => {
+        try {
+          const networkState = reference_connection_state();
+          if (networkState !== "disconnected") {
+            tick_reference_network();
+            networkStatus.textContent = `Network: ${networkState}`;
+          }
+        } catch (error) {
+          networkStatus.textContent = `Network error: ${error}`;
+          connectButton.disabled = false;
+          disconnectButton.disabled = true;
+        }
         draw_frame();
         if (++statusFrame % 30 === 0) {
           const target = target_block_state();
