@@ -101,6 +101,9 @@ fn send_reference_movement(
         return Ok(());
     }
     let Some(current) = render::player_network_state() else { return Ok(()); };
+    // Convert the local radian camera convention to reference vanilla degrees.
+    let server_yaw = current.yaw.to_degrees() + 180.0;
+    let server_pitch = -current.pitch.to_degrees();
     let previous = LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow());
 
     let packet = match previous {
@@ -109,8 +112,8 @@ fn send_reference_movement(
             payload.extend_from_slice(&current.x.to_be_bytes());
             payload.extend_from_slice(&current.y.to_be_bytes());
             payload.extend_from_slice(&current.z.to_be_bytes());
-            payload.extend_from_slice(&current.yaw.to_be_bytes());
-            payload.extend_from_slice(&current.pitch.to_be_bytes());
+            payload.extend_from_slice(&server_yaw.to_be_bytes());
+            payload.extend_from_slice(&server_pitch.to_be_bytes());
             payload.push(u8::from(current.on_ground));
             Some((0x14, payload))
         }
