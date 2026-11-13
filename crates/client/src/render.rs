@@ -375,6 +375,39 @@ pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(),
                 }
                 update_dirty_section_meshes(renderer);
             }
+            crate::reference_play::ReferencePlayPacket::BlockUpdate { position, state } => {
+                renderer.world.set_block(position, state);
+                update_dirty_section_meshes(renderer);
+            }
+            crate::reference_play::ReferencePlayPacket::UnloadChunk { chunk_x, chunk_z } => {
+                renderer.world.remove_column(chunk_x, chunk_z);
+                update_dirty_section_meshes(renderer);
+            }
+            crate::reference_play::ReferencePlayPacket::PlayerPosition {
+                x, y, z, yaw, pitch, relative_flags, ..
+            } => {
+                let position = renderer.player.position;
+                renderer.player.position = Vec3::new(
+                    if relative_flags & 0x01 != 0 { position.x + x } else { x },
+                    if relative_flags & 0x02 != 0 { position.y + y } else { y },
+                    if relative_flags & 0x04 != 0 { position.z + z } else { z },
+                );
+                let yaw_radians = yaw.to_radians();
+                let pitch_radians = pitch.to_radians();
+                renderer.camera_yaw = if relative_flags & 0x08 != 0 {
+                    renderer.camera_yaw + yaw_radians
+                } else {
+                    yaw_radians
+                };
+                renderer.camera_pitch = if relative_flags & 0x10 != 0 {
+                    renderer.camera_pitch + pitch_radians
+                } else {
+                    pitch_radians
+                }.clamp(-1.5533, 1.5533);
+                renderer.player.yaw = f64::from(renderer.camera_yaw);
+                renderer.player.velocity = Vec3::default();
+                renderer.player.on_ground = false;
+            }
             crate::reference_play::ReferencePlayPacket::Unhandled { .. } => {}
         }
         Ok(())
