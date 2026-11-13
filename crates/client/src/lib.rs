@@ -73,6 +73,14 @@ pub fn draw_frame() -> Result<(), JsValue> {
     render::draw_frame()
 }
 
+
+/// Apply a single complete 26.1.2 reference play packet to the live Rust world.
+/// Packet IDs and layouts are reference-only pending 26.3 verification.
+#[wasm_bindgen]
+pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(), JsValue> {
+    render::apply_reference_play_packet(packet_id, payload)
+}
+
 /// Break the block currently targeted by the player.
 #[wasm_bindgen]
 pub fn break_target() -> bool {
