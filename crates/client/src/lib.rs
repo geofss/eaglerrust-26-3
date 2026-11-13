@@ -80,6 +80,18 @@ pub fn draw_frame() -> Result<(), JsValue> {
 
 
 
+#[cfg(target_arch = "wasm32")]
+fn encode_reference_varint(value: i32) -> Vec<u8> {
+    let mut value = value as u32;
+    let mut bytes = Vec::with_capacity(5);
+    while value & !0x7f != 0 {
+        bytes.push((value as u8 & 0x7f) | 0x80);
+        value >>= 7;
+    }
+    bytes.push(value as u8);
+    bytes
+}
+
 /// Open a browser WebSocket and begin the audited 26.1.2 reference login.
 /// This is a development connector; do not assume 26.3 compatibility.
 #[cfg(target_arch = "wasm32")]
@@ -122,6 +134,12 @@ pub fn tick_reference_network() -> Result<u32, JsValue> {
         for event in events {
             match event {
                 protocol::ProtocolEvent::PlayPacket { packet_id, payload } => {
+                    let decoded = reference_play::decode_reference_play_packet(packet_id, &payload)
+                        .map_err(|error| JsValue::from_str(&format!("reference play packet rejected: {error:?}")))?;
+                    if let reference_play::ReferencePlayPacket::PlayerPosition { teleport_id, .. } = decoded {
+                        let confirm_payload = encode_reference_varint(teleport_id);
+                        connection.send_play_packet(0x00, &confirm_payload)?;
+                    }
                     render::apply_reference_play_packet(packet_id, &payload)?;
                     processed = processed.saturating_add(1);
                 }
