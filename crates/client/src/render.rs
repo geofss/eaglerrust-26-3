@@ -45,6 +45,7 @@ struct Renderer {
     pressed_keys: HashSet<String>,
     last_tick_ms: f64,
     tick_accumulator: f64,
+    server_world_active: bool,
 }
 
 thread_local! {
@@ -175,6 +176,7 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             pressed_keys: HashSet::new(),
             last_tick_ms: js_sys::Date::now(),
             tick_accumulator: 0.0,
+            server_world_active: false,
         });
     });
 
@@ -267,15 +269,17 @@ pub fn draw_frame() -> Result<(), JsValue> {
                 renderer.player.position.x.floor() as i32, 0,
                 renderer.player.position.z.floor() as i32,
             ).chunk();
-            let chunk_update = renderer.chunk_manager.update_with_budget(
-                &mut renderer.world,
-                center_chunk,
-                &TerrainGenerator::new(0xEA61_2026, 5, 3),
-                1,
-                1,
-            );
-            if chunk_update.loaded_columns > 0 || chunk_update.unloaded_columns > 0 {
-                update_dirty_section_meshes(renderer);
+            if !renderer.server_world_active {
+                let chunk_update = renderer.chunk_manager.update_with_budget(
+                    &mut renderer.world,
+                    center_chunk,
+                    &TerrainGenerator::new(0xEA61_2026, 5, 3),
+                    1,
+                    1,
+                );
+                if chunk_update.loaded_columns > 0 || chunk_update.unloaded_columns > 0 {
+                    update_dirty_section_meshes(renderer);
+                }
             }
             renderer.tick_accumulator -= 0.05;
         }
@@ -335,6 +339,43 @@ pub fn draw_frame() -> Result<(), JsValue> {
             renderer.gl.vertex_attrib_pointer_with_i32(renderer.color_attribute, 3, Gl::FLOAT, false, stride, (3 * std::mem::size_of::<f32>()) as i32);
             renderer.gl.vertex_attrib_pointer_with_i32(renderer.uv_attribute, 2, Gl::FLOAT, false, stride, (6 * std::mem::size_of::<f32>()) as i32);
             renderer.gl.draw_arrays(Gl::LINES, 0, (outline.len() / 8) as i32);
+        }
+        Ok(())
+    })
+}
+
+
+/// Apply one decoded 26.1.2 reference play packet to the live renderer.
+///
+/// The first server Play Login clears the procedural demo terrain and switches
+/// chunk streaming to server-authoritative mode. Chunk packets are validated
+/// in full before their sections are installed and remeshed.
+pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(), JsValue> {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let renderer = borrowed.as_mut()
+            .ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        let packet = crate::reference_play::decode_reference_play_packet(packet_id, payload)
+            .map_err(|error| JsValue::from_str(&format!("reference play packet rejected: {error:?}")))?;
+        match packet {
+            crate::reference_play::ReferencePlayPacket::Login(login) => {
+                for (_, mesh) in renderer.section_meshes.drain() {
+                    renderer.gl.delete_buffer(Some(&mesh.buffer));
+                }
+                renderer.world = World::new();
+                renderer.server_world_active = true;
+                renderer.player.position = Vec3::new(login.spawn_x, login.spawn_y, login.spawn_z);
+            }
+            crate::reference_play::ReferencePlayPacket::Chunk(chunk) => {
+                for section in chunk.sections {
+                    renderer.world.replace_section(
+                        SectionPosition::new(chunk.chunk_x, i32::from(section.section_y), chunk.chunk_z),
+                        section.data,
+                    );
+                }
+                update_dirty_section_meshes(renderer);
+            }
+            crate::reference_play::ReferencePlayPacket::Unhandled { .. } => {}
         }
         Ok(())
     })
