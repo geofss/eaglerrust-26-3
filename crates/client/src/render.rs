@@ -12,7 +12,7 @@ use crate::input::InputFrame;
 use crate::interaction::{break_block, place_block, target_block, MiningController, MiningUpdate};
 use crate::physics::Vec3;
 use crate::player::Player;
-use crate::world::{BlockPosition, BlockStateId, SectionPosition, TerrainGenerator, World};
+use crate::world::{BlockPosition, BlockStateId, ChunkPosition, SectionPosition, TerrainGenerator, World};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
     WebGlShader, WebGlTexture, WebGlUniformLocation,
@@ -49,6 +49,7 @@ struct Renderer {
     uv_attribute: u32,
     world: World,
     chunk_manager: ChunkManager,
+    world_seed: u32,
     player: Player,
     camera_yaw: f32,
     camera_pitch: f32,
@@ -139,13 +140,14 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         .get_uniform_location(&program, "u_atlas")
         .ok_or_else(|| JsValue::from_str("Texture atlas sampler is missing"))?;
 
-    let generator = TerrainGenerator::new(0xEA61_2026, 5, 3);
+    let world_seed = 0xEA61_2026;
+    let generator = TerrainGenerator::new(world_seed, 5, 3);
     let mut world = World::new();
     let mut chunk_manager = ChunkManager::new(1);
     chunk_manager.update(&mut world, BlockPosition::new(0, 0, 0).chunk(), &generator);
     let section_meshes = build_section_gpu_meshes(&gl, &world, atlas_layout)?;
     world.take_dirty_sections();
-    let spawn_height = TerrainGenerator::new(0xEA61_2026, 5, 3).height_at(0, 0).max(1) as f64 + 1.01;
+    let spawn_height = generator.height_at(0, 0).max(1) as f64 + 1.01;
     let player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
     gl.use_program(Some(&program));
     let position = gl.get_attrib_location(&program, "a_position");
@@ -185,6 +187,7 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             uv_attribute: uv as u32,
             world,
             chunk_manager,
+            world_seed,
             player,
             camera_yaw: 0.0,
             camera_pitch: -0.34,
@@ -265,6 +268,106 @@ pub fn disconnect_reference_world() {
     });
 }
 
+/// Create a fresh local world with a deterministic seed.
+pub fn create_singleplayer_world(seed: u32) -> Result<(), JsValue> {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let renderer = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        if renderer.server_world_active {
+            return Err(JsValue::from_str("Disconnect from the server before creating a local world"));
+        }
+        let generator = TerrainGenerator::new(seed, 5, 3);
+        let mut world = World::new();
+        let mut chunk_manager = ChunkManager::new(renderer.chunk_manager.radius());
+        chunk_manager.update(&mut world, ChunkPosition::new(0, 0), &generator);
+        let meshes = build_section_gpu_meshes(&renderer.gl, &world, renderer.atlas_layout)?;
+        for (_, mesh) in renderer.section_meshes.drain() {
+            renderer.gl.delete_buffer(Some(&mesh.buffer));
+        }
+        world.take_dirty_sections();
+        let spawn_height = generator.height_at(0, 0).max(1) as f64 + 1.01;
+        renderer.world = world;
+        renderer.chunk_manager = chunk_manager;
+        renderer.world_seed = seed;
+        renderer.section_meshes = meshes;
+        renderer.player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
+        renderer.camera_yaw = 0.0;
+        renderer.camera_pitch = -0.34;
+        renderer.pressed_keys.clear();
+        renderer.tick_accumulator = 0.0;
+        renderer.server_world_active = false;
+        renderer.breaking_held = false;
+        renderer.mining.reset();
+        renderer.active_dig = None;
+        renderer.completed_dig = None;
+        renderer.pending_dig_actions.clear();
+        Ok(())
+    })
+}
+
+/// Serialize the current local world and player spawn state for browser storage.
+pub fn save_singleplayer_world() -> Result<Vec<u8>, JsValue> {
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let renderer = borrowed.as_ref().ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        if renderer.server_world_active {
+            return Err(JsValue::from_str("Multiplayer worlds cannot be saved as singleplayer worlds"));
+        }
+        let save = crate::singleplayer::SingleplayerSave {
+            seed: renderer.world_seed,
+            player_position: [
+                renderer.player.position.x,
+                renderer.player.position.y,
+                renderer.player.position.z,
+            ],
+            yaw: renderer.camera_yaw,
+            pitch: renderer.camera_pitch,
+            world: renderer.world.clone(),
+        };
+        save.encode().map_err(|error| JsValue::from_str(&error.to_string()))
+    })
+}
+
+/// Restore a validated local save and rebuild its GPU meshes before replacing the active world.
+pub fn load_singleplayer_world(bytes: &[u8]) -> Result<(), JsValue> {
+    let save = crate::singleplayer::SingleplayerSave::decode(bytes)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let renderer = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        if renderer.server_world_active {
+            return Err(JsValue::from_str("Disconnect from the server before loading a local save"));
+        }
+        let meshes = build_section_gpu_meshes(&renderer.gl, &save.world, renderer.atlas_layout)?;
+        for (_, mesh) in renderer.section_meshes.drain() {
+            renderer.gl.delete_buffer(Some(&mesh.buffer));
+        }
+        let mut world = save.world;
+        world.take_dirty_sections();
+        let mut chunk_manager = ChunkManager::new(renderer.chunk_manager.radius());
+        chunk_manager.adopt_loaded_world(&world);
+        renderer.world = world;
+        renderer.chunk_manager = chunk_manager;
+        renderer.world_seed = save.seed;
+        renderer.section_meshes = meshes;
+        renderer.player = Player::new(Vec3::new(
+            save.player_position[0], save.player_position[1], save.player_position[2],
+        ));
+        renderer.camera_yaw = save.yaw;
+        renderer.camera_pitch = save.pitch.clamp(-1.45, 1.45);
+        renderer.player.yaw = f64::from(renderer.camera_yaw);
+        renderer.pressed_keys.clear();
+        renderer.tick_accumulator = 0.0;
+        renderer.server_world_active = false;
+        renderer.breaking_held = false;
+        renderer.mining.reset();
+        renderer.active_dig = None;
+        renderer.completed_dig = None;
+        renderer.pending_dig_actions.clear();
+        Ok(())
+    })
+}
+
 /// Set or clear the held primary break action. The frame loop handles abort packets.
 pub fn set_breaking(held: bool) {
     RENDERER.with(|slot| {
@@ -332,7 +435,7 @@ pub fn draw_frame() -> Result<(), JsValue> {
                 let chunk_update = renderer.chunk_manager.update_with_budget(
                     &mut renderer.world,
                     center_chunk,
-                    &TerrainGenerator::new(0xEA61_2026, 5, 3),
+                    &TerrainGenerator::new(renderer.world_seed, 5, 3),
                     1,
                     1,
                 );
