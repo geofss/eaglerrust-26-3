@@ -68,7 +68,10 @@ mod browser {
 
             let open_state = Rc::clone(&shared);
             let on_open = Closure::wrap(Box::new(move |_event: Event| {
-                open_state.borrow_mut().state = ConnectionState::Connected;
+                let mut state = open_state.borrow_mut();
+                if state.state == ConnectionState::Connecting {
+                    state.state = ConnectionState::Connected;
+                }
             }) as Box<dyn FnMut(Event)>);
             socket.set_onopen(Some(on_open.as_ref().unchecked_ref()));
 
@@ -84,6 +87,9 @@ mod browser {
 
                 let bytes = Uint8Array::new(&buffer).to_vec();
                 let mut state = message_state.borrow_mut();
+                if state.state == ConnectionState::Failed {
+                    return;
+                }
                 if state.incoming.len() >= MAX_QUEUED_MESSAGES
                     || state.queued_bytes.saturating_add(bytes.len()) > MAX_QUEUED_BYTES
                 {
@@ -155,7 +161,11 @@ mod browser {
 
         /// Begin a normal WebSocket close handshake.
         pub fn close(&self) -> Result<(), JsValue> {
-            self.shared.borrow_mut().state = ConnectionState::Closing;
+            let mut state = self.shared.borrow_mut();
+            if state.state != ConnectionState::Failed {
+                state.state = ConnectionState::Closing;
+            }
+            drop(state);
             self.socket.close()
         }
     }
