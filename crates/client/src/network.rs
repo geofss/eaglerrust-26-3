@@ -168,7 +168,7 @@ mod browser {
                 }
                 let protocols = Array::new();
                 protocols.push(&JsValue::from_str(protocol));
-                WebSocket::new_with_str_sequence(url, &protocols)?
+                WebSocket::new_with_str_sequence(url, protocols.as_ref())?
             } else {
                 WebSocket::new(url)?
             };
