@@ -84,14 +84,6 @@ mod browser {
             Ok(delivered)
         }
 
-        /// Send configuration bootstrap packets after Login Success.
-        pub fn send_configuration_bootstrap(&mut self) -> Result<(), JsValue> {
-            let packets = self.protocol.configuration_bootstrap()
-                .map_err(|error| JsValue::from_str(&format!("configuration is not ready: {error:?}")))?;
-            self.pending_outbound.extend(packets);
-            self.flush_outbound()
-        }
-
         fn flush_outbound(&mut self) -> Result<(), JsValue> {
             if self.transport.state() != ConnectionState::Connected {
                 return Ok(());
