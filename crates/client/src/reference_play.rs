@@ -5,7 +5,10 @@
 //! match Eaglercraft 26.3. Unknown play packets are preserved for later work.
 
 use crate::chunk_codec::{decode_reference_chunk_packet, ReferenceChunkPacket, ReferenceChunkPacketError};
-use crate::world::{BlockPosition, BlockStateId, SectionPosition, World};
+use crate::world::{
+    BlockPosition, BlockStateId, ChunkSection, LocalBlockPosition, SectionPosition,
+    AIR, DIRT, GRASS_BLOCK, LEAVES, LOG, SAND, STONE, World,
+};
 
 pub const REFERENCE_S2C_PLAY_BLOCK_UPDATE: i32 = 0x05;
 pub const REFERENCE_S2C_PLAY_UNLOAD_CHUNK: i32 = 0x1f;
@@ -164,6 +167,40 @@ pub fn decode_reference_play_login(
     })
 }
 
+/// Translate the small set of 26.1.2 reference registry IDs for which
+/// this prototype currently has matching render/collision definitions.
+/// Unknown server states remain distinct and render with the unknown fallback.
+pub fn map_reference_block_state(server_id: BlockStateId) -> BlockStateId {
+    match server_id.0 {
+        0 => AIR,
+        1 | 4 | 33 => STONE,
+        9 => GRASS_BLOCK,
+        10 => DIRT,
+        345 => SAND,
+        351 => LOG,
+        359 => LEAVES,
+        other => BlockStateId(0x8000_0000 | other),
+    }
+}
+
+fn map_reference_chunk_states(chunk: &mut ReferenceChunkPacket) {
+    for section in &mut chunk.sections {
+        let source = section.data.as_slice();
+        let mut mapped = ChunkSection::new();
+        for (index, state) in source.iter().copied().enumerate() {
+            mapped.set(
+                LocalBlockPosition {
+                    x: (index % 16) as u8,
+                    y: (index / 256) as u8,
+                    z: ((index / 16) % 16) as u8,
+                },
+                map_reference_block_state(state),
+            );
+        }
+        section.data = mapped;
+    }
+}
+
 fn decode_packed_block_position(packed: i64) -> BlockPosition {
     BlockPosition::new(
         (packed >> 38) as i32,
@@ -180,7 +217,11 @@ pub fn decode_reference_play_packet(
 ) -> Result<ReferencePlayPacket, ReferencePlayPacketError> {
     match packet_id {
         REFERENCE_S2C_PLAY_LOGIN => Ok(ReferencePlayPacket::Login(decode_reference_play_login(payload)?)),
-        REFERENCE_S2C_PLAY_CHUNK => Ok(ReferencePlayPacket::Chunk(decode_reference_chunk_packet(payload)?)),
+        REFERENCE_S2C_PLAY_CHUNK => {
+            let mut chunk = decode_reference_chunk_packet(payload)?;
+            map_reference_chunk_states(&mut chunk);
+            Ok(ReferencePlayPacket::Chunk(chunk))
+        },
         REFERENCE_S2C_PLAY_BLOCK_UPDATE => {
             let mut reader = Reader::new(payload);
             let packed = reader.i64()?;
@@ -189,7 +230,7 @@ pub fn decode_reference_play_packet(
             reader.finish()?;
             Ok(ReferencePlayPacket::BlockUpdate {
                 position: decode_packed_block_position(packed),
-                state: BlockStateId(block_id as u32),
+                state: map_reference_block_state(BlockStateId(block_id as u32)),
             })
         }
         REFERENCE_S2C_PLAY_UNLOAD_CHUNK => {
@@ -390,7 +431,7 @@ mod tests {
         let mut world = World::new();
         let packet = apply_reference_play_packet(&mut world, REFERENCE_S2C_PLAY_CHUNK, &writer.into_bytes()).unwrap();
         assert!(matches!(packet, ReferencePlayPacket::Chunk(_)));
-        assert_eq!(world.get_block(BlockPosition::new(-13, 0, 32)), BlockStateId(91));
+        assert_eq!(world.get_block(BlockPosition::new(-13, 0, 32)), map_reference_block_state(BlockStateId(91)));
     }
 
     #[test]
