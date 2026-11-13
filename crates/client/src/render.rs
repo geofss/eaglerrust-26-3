@@ -483,17 +483,20 @@ pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(),
                     if relative_flags & 0x02 != 0 { position.y + y } else { y },
                     if relative_flags & 0x04 != 0 { position.z + z } else { z },
                 );
-                let yaw_radians = yaw.to_radians();
-                let pitch_radians = pitch.to_radians();
+                // The local camera uses yaw 0 toward -Z and positive pitch upward;
+                // the reference server uses vanilla degrees (yaw 180 toward -Z,
+                // positive pitch downward).
+                let local_yaw_delta = -yaw.to_radians();
+                let local_pitch_delta = -pitch.to_radians();
                 renderer.camera_yaw = if relative_flags & 0x08 != 0 {
-                    renderer.camera_yaw + yaw_radians
+                    renderer.camera_yaw + local_yaw_delta
                 } else {
-                    yaw_radians
+                    (yaw - 180.0).to_radians()
                 };
                 renderer.camera_pitch = if relative_flags & 0x10 != 0 {
-                    renderer.camera_pitch + pitch_radians
+                    renderer.camera_pitch + local_pitch_delta
                 } else {
-                    pitch_radians
+                    local_pitch_delta
                 }.clamp(-1.5533, 1.5533);
                 renderer.player.yaw = f64::from(renderer.camera_yaw);
                 renderer.player.velocity = Vec3::default();
