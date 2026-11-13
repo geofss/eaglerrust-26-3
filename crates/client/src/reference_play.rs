@@ -370,7 +370,7 @@ mod tests {
             decode_reference_play_packet(REFERENCE_S2C_PLAY_BLOCK_UPDATE, &writer.into_bytes()).unwrap(),
             ReferencePlayPacket::BlockUpdate {
                 position: BlockPosition::new(-2, -7, 3),
-                state: BlockStateId(42),
+                state: map_reference_block_state(BlockStateId(42)),
             }
         );
     }
