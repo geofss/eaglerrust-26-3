@@ -5,7 +5,7 @@
 //! match Eaglercraft 26.3. Unknown play packets are preserved for later work.
 
 use crate::chunk_codec::{decode_reference_chunk_packet, ReferenceChunkPacket, ReferenceChunkPacketError};
-use crate::world::{SectionPosition, World};
+use crate::world::{BlockPosition, BlockStateId, SectionPosition, World};
 
 pub const REFERENCE_S2C_PLAY_BLOCK_UPDATE: i32 = 0x05;
 pub const REFERENCE_S2C_PLAY_UNLOAD_CHUNK: i32 = 0x1f;
@@ -35,6 +35,12 @@ pub struct ReferencePlayLogin {
 pub enum ReferencePlayPacket {
     Login(ReferencePlayLogin),
     Chunk(ReferenceChunkPacket),
+    BlockUpdate { position: BlockPosition, state: BlockStateId },
+    UnloadChunk { chunk_x: i32, chunk_z: i32 },
+    PlayerPosition {
+        x: f64, y: f64, z: f64, yaw: f32, pitch: f32,
+        relative_flags: u8, teleport_id: i32,
+    },
     Unhandled { packet_id: i32, payload: Vec<u8> },
 }
 
@@ -45,6 +51,8 @@ pub enum ReferencePlayPacketError {
     InvalidString,
     InvalidBoolean(u8),
     InvalidViewDistance(i32),
+    InvalidBlockStateId(i32),
+    InvalidTeleportId(i32),
     TrailingBytes(usize),
     Chunk(ReferenceChunkPacketError),
 }
@@ -86,6 +94,10 @@ impl<'a> Reader<'a> {
 
     fn i64(&mut self) -> Result<i64, ReferencePlayPacketError> {
         Ok(i64::from_be_bytes(self.read(8)?.try_into().map_err(|_| ReferencePlayPacketError::Truncated)?))
+    }
+
+    fn f32(&mut self) -> Result<f32, ReferencePlayPacketError> {
+        Ok(f32::from_bits(u32::from_be_bytes(self.read(4)?.try_into().map_err(|_| ReferencePlayPacketError::Truncated)?)))
     }
 
     fn f64(&mut self) -> Result<f64, ReferencePlayPacketError> {
@@ -152,6 +164,14 @@ pub fn decode_reference_play_login(
     })
 }
 
+fn decode_packed_block_position(packed: i64) -> BlockPosition {
+    BlockPosition::new(
+        (packed >> 38) as i32,
+        (packed << 52 >> 52) as i32,
+        (packed << 26 >> 38) as i32,
+    )
+}
+
 /// Decode the source-pinned subset of play packets. Unknown packets are kept
 /// intact instead of being silently discarded.
 pub fn decode_reference_play_packet(
@@ -161,6 +181,39 @@ pub fn decode_reference_play_packet(
     match packet_id {
         REFERENCE_S2C_PLAY_LOGIN => Ok(ReferencePlayPacket::Login(decode_reference_play_login(payload)?)),
         REFERENCE_S2C_PLAY_CHUNK => Ok(ReferencePlayPacket::Chunk(decode_reference_chunk_packet(payload)?)),
+        REFERENCE_S2C_PLAY_BLOCK_UPDATE => {
+            let mut reader = Reader::new(payload);
+            let packed = reader.i64()?;
+            let block_id = reader.varint()?;
+            if block_id < 0 { return Err(ReferencePlayPacketError::InvalidBlockStateId(block_id)); }
+            reader.finish()?;
+            Ok(ReferencePlayPacket::BlockUpdate {
+                position: decode_packed_block_position(packed),
+                state: BlockStateId(block_id as u32),
+            })
+        }
+        REFERENCE_S2C_PLAY_UNLOAD_CHUNK => {
+            let mut reader = Reader::new(payload);
+            let chunk_x = reader.i32()?;
+            let chunk_z = reader.i32()?;
+            reader.finish()?;
+            Ok(ReferencePlayPacket::UnloadChunk { chunk_x, chunk_z })
+        }
+        REFERENCE_S2C_PLAY_PLAYER_POSITION => {
+            let mut reader = Reader::new(payload);
+            let x = reader.f64()?;
+            let y = reader.f64()?;
+            let z = reader.f64()?;
+            let yaw = reader.f32()?;
+            let pitch = reader.f32()?;
+            let relative_flags = reader.u8()?;
+            let teleport_id = reader.varint()?;
+            if teleport_id < 0 { return Err(ReferencePlayPacketError::InvalidTeleportId(teleport_id)); }
+            reader.finish()?;
+            Ok(ReferencePlayPacket::PlayerPosition {
+                x, y, z, yaw, pitch, relative_flags, teleport_id,
+            })
+        }
         _ => Ok(ReferencePlayPacket::Unhandled { packet_id, payload: payload.to_vec() }),
     }
 }
@@ -173,13 +226,22 @@ pub fn apply_reference_play_packet(
     payload: &[u8],
 ) -> Result<ReferencePlayPacket, ReferencePlayPacketError> {
     let packet = decode_reference_play_packet(packet_id, payload)?;
-    if let ReferencePlayPacket::Chunk(chunk) = &packet {
-        for section in &chunk.sections {
-            world.replace_section(
-                SectionPosition::new(chunk.chunk_x, i32::from(section.section_y), chunk.chunk_z),
-                section.data.clone(),
-            );
+    match &packet {
+        ReferencePlayPacket::Chunk(chunk) => {
+            for section in &chunk.sections {
+                world.replace_section(
+                    SectionPosition::new(chunk.chunk_x, i32::from(section.section_y), chunk.chunk_z),
+                    section.data.clone(),
+                );
+            }
         }
+        ReferencePlayPacket::BlockUpdate { position, state } => {
+            world.set_block(*position, *state);
+        }
+        ReferencePlayPacket::UnloadChunk { chunk_x, chunk_z } => {
+            world.remove_column(*chunk_x, *chunk_z);
+        }
+        _ => {}
     }
     Ok(packet)
 }
@@ -252,6 +314,52 @@ mod tests {
         let view_offset = 4 + 1 + 1 + "minecraft:overworld".len() + 8 + 1 + 1 + 1 + "default".len();
         payload[view_offset] = 1;
         assert_eq!(decode_reference_play_login(&payload), Err(ReferencePlayPacketError::InvalidViewDistance(1)));
+    }
+
+    #[test]
+    fn decodes_server_block_update_and_negative_coordinates() {
+        use crate::packet::PacketWriter;
+        let packed = ((-2_i64 & 0x3ff_ffff) << 38)
+            | ((-7_i64 & 0xfff) << 0)
+            | ((3_i64 & 0x3ff_ffff) << 12);
+        let mut writer = PacketWriter::new();
+        writer.write_i64_be(packed);
+        writer.write_varint(42);
+        assert_eq!(
+            decode_reference_play_packet(REFERENCE_S2C_PLAY_BLOCK_UPDATE, &writer.into_bytes()).unwrap(),
+            ReferencePlayPacket::BlockUpdate {
+                position: BlockPosition::new(-2, -7, 3),
+                state: BlockStateId(42),
+            }
+        );
+    }
+
+    #[test]
+    fn decodes_unload_and_player_teleport_packets() {
+        use crate::packet::PacketWriter;
+        let mut unload = PacketWriter::new();
+        unload.write_i32_be(-4);
+        unload.write_i32_be(9);
+        assert_eq!(
+            decode_reference_play_packet(REFERENCE_S2C_PLAY_UNLOAD_CHUNK, &unload.into_bytes()).unwrap(),
+            ReferencePlayPacket::UnloadChunk { chunk_x: -4, chunk_z: 9 }
+        );
+
+        let mut teleport = PacketWriter::new();
+        teleport.write_f64_be(1.5);
+        teleport.write_f64_be(72.0);
+        teleport.write_f64_be(-3.25);
+        teleport.write_bytes(&30.0_f32.to_bits().to_be_bytes());
+        teleport.write_bytes(&(-10.0_f32).to_bits().to_be_bytes());
+        teleport.write_bytes(&[0]);
+        teleport.write_varint(17);
+        assert_eq!(
+            decode_reference_play_packet(REFERENCE_S2C_PLAY_PLAYER_POSITION, &teleport.into_bytes()).unwrap(),
+            ReferencePlayPacket::PlayerPosition {
+                x: 1.5, y: 72.0, z: -3.25, yaw: 30.0, pitch: -10.0,
+                relative_flags: 0, teleport_id: 17,
+            }
+        );
     }
 
     #[test]
