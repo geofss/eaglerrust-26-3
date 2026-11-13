@@ -288,6 +288,7 @@ pub fn disconnect_reference_server() {
         }
     });
     LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
+    render::disconnect_reference_world();
 }
 
 /// Apply a single complete 26.1.2 reference play packet to the live Rust world.
