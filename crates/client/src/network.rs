@@ -1,8 +1,8 @@
 //! Network transport lifecycle and packet codec exports.
 //!
-//! The browser adapter below provides binary WebSocket transport only. It does
-//! not claim to implement the Eaglercraft 26.3 handshake, login state machine,
-//! encryption, compression, or packet IDs.
+//! The browser adapter provides binary WebSocket transport plus a version-pinned
+//! 26.1.2 reference protocol driver. It does not claim 26.3 packet compatibility,
+//! encryption, or compression.
 
 pub use crate::packet::{decode_packet_frame, encode_packet_frame, PacketError, PacketReader, PacketWriter};
 
