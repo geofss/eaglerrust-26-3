@@ -228,6 +228,28 @@
     #status { color: #b7d9f8; }
     .hint { text-align: right; }
 
+    .singleplayer-panel {
+      margin-top: 14px;
+      padding: 16px;
+      border: 1px solid #31533f;
+      border-radius: 14px;
+      background: #0d1b18;
+    }
+    .singleplayer-panel h2 { margin: 0 0 6px; font-size: 1rem; }
+    .singleplayer-panel p { margin: 0 0 12px; color: #9ab8a8; font-size: .8rem; line-height: 1.5; }
+    .singleplayer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+    .singleplayer-actions label { display: grid; gap: 5px; color: #a9c5b6; font-size: .72rem; }
+    .singleplayer-actions input {
+      width: 150px; min-width: 0; padding: 10px;
+      border: 1px solid #3b5b4a; border-radius: 8px;
+      background: #081510; color: #edf2ff; font: inherit;
+    }
+    .singleplayer-actions button {
+      padding: 10px 13px; border: 1px solid #47765c; border-radius: 8px;
+      background: #193b2a; color: #effff4; font-weight: 700;
+    }
+    #singleplayer-status { margin-top: 10px; color: #b2d8c0; font: .72rem ui-monospace, monospace; }
+
     .connect-panel {
       margin-top: 14px;
       padding: 16px;
@@ -309,6 +331,20 @@
       </div>
     </section>
 
+    <section class="singleplayer-panel" aria-label="Singleplayer worlds">
+      <h2>Singleplayer world</h2>
+      <p>Local procedural world simulation with seed-based generation. Save/load stores your current blocks and player location in this browser's local storage. This is an in-progress Rust game prototype, not full Minecraft parity.</p>
+      <div class="singleplayer-actions">
+        <label>World seed
+          <input id="world-seed" type="number" min="0" max="4294967295" step="1" value="393216" inputmode="numeric">
+        </label>
+        <button id="new-world" type="button">Create World</button>
+        <button id="save-world" type="button">Save World</button>
+        <button id="load-world" type="button">Load World</button>
+      </div>
+      <div id="singleplayer-status" role="status">Local world ready · not yet saved</div>
+    </section>
+
     <section class="connect-panel" aria-label="Experimental server connection">
       <h2>Experimental server connection</h2>
       <p>Eaglercraft V5 handshake · Minecraft protocol 777 (26.3 target). Standard EaglerXServer normally does not require an HTTP WebSocket subprotocol. Gameplay packet coverage is still under development.</p>
@@ -335,6 +371,9 @@
     import init, {
       boot,
       start_renderer,
+      create_singleplayer_world,
+      save_singleplayer_world,
+      load_singleplayer_world,
       resize_renderer,
       draw_frame,
       set_key,
@@ -391,6 +430,60 @@
         });
       }
       refreshHotbar();
+
+      // Browser-local persistence for the Rust singleplayer snapshot.
+      const singleplayerStatus = document.getElementById("singleplayer-status");
+      const saveKey = "eaglerrust.singleplayer.save.v1";
+      const seedInput = document.getElementById("world-seed");
+      const bytesToBase64 = (bytes) => {
+        let binary = "";
+        for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+        }
+        return btoa(binary);
+      };
+      const base64ToBytes = (encoded) => {
+        const binary = atob(encoded);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+        return bytes;
+      };
+      document.getElementById("new-world").addEventListener("click", () => {
+        try {
+          const seed = Number(seedInput.value);
+          if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
+            throw new Error("Seed must be an integer from 0 to 4294967295");
+          }
+          create_singleplayer_world(seed);
+          singleplayerStatus.textContent = `New local world created · seed ${seed}`;
+          status.textContent = "Singleplayer world generated · local simulation active";
+        } catch (error) {
+          singleplayerStatus.textContent = `Create failed: ${error}`;
+        }
+      });
+      document.getElementById("save-world").addEventListener("click", () => {
+        try {
+          const bytes = save_singleplayer_world();
+          localStorage.setItem(saveKey, bytesToBase64(bytes));
+          singleplayerStatus.textContent = `Saved locally · ${bytes.length.toLocaleString()} bytes`;
+          status.textContent = "Singleplayer world saved in this browser";
+        } catch (error) {
+          singleplayerStatus.textContent = `Save failed: ${error}`;
+        }
+      });
+      document.getElementById("load-world").addEventListener("click", () => {
+        try {
+          const encoded = localStorage.getItem(saveKey);
+          if (!encoded) throw new Error("No local save found in this browser");
+          const bytes = base64ToBytes(encoded);
+          load_singleplayer_world(bytes);
+          singleplayerStatus.textContent = `Loaded local save · ${bytes.length.toLocaleString()} bytes`;
+          status.textContent = "Singleplayer save restored · world and player location loaded";
+          refreshHotbar();
+        } catch (error) {
+          singleplayerStatus.textContent = `Load failed: ${error}`;
+        }
+      });
 
       const networkStatus = document.getElementById("network-status");
       const connectButton = document.getElementById("connect-server");
