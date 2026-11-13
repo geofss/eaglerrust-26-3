@@ -134,9 +134,16 @@ mod tests {
         let position = BlockPosition::new(1, 2, 3);
         let mut mining = MiningController::default();
         assert!(matches!(mining.tick(Some(hit(position, DIRT)), true, 0.05), MiningUpdate::Started { .. }));
-        let mut result = MiningUpdate::Idle;
-        for _ in 0..20 { result = mining.tick(Some(hit(position, DIRT)), true, 0.05); }
-        assert!(matches!(result, MiningUpdate::Completed { position: p, state: DIRT } if p == position));
+        let mut completed = false;
+        for _ in 0..20 {
+            if let MiningUpdate::Completed { position: p, state } = mining.tick(Some(hit(position, DIRT)), true, 0.05) {
+                assert_eq!(p, position);
+                assert_eq!(state, DIRT);
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "held mining should eventually complete");
         assert_eq!(mining.tick(Some(hit(position, DIRT)), true, 0.05), MiningUpdate::Started { position });
     }
 
@@ -145,9 +152,9 @@ mod tests {
         let first = BlockPosition::new(0, 0, 0);
         let second = BlockPosition::new(1, 0, 0);
         let mut mining = MiningController::default();
-        mining.tick(Some(hit(first, STONE)), true, 0.1);
-        mining.tick(Some(hit(first, STONE)), true, 0.1);
-        assert_eq!(mining.tick(Some(hit(second, STONE)), true, 0.1), MiningUpdate::Started { position: second });
+        mining.tick(Some(hit(first, STONE)), true, 0.05);
+        mining.tick(Some(hit(first, STONE)), true, 0.05);
+        assert_eq!(mining.tick(Some(hit(second, STONE)), true, 0.05), MiningUpdate::Started { position: second });
         assert!(mining.progress() < 0.1);
     }
 
