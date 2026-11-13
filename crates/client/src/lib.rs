@@ -7,6 +7,7 @@ use crate::world::BlockStateId;
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static REFERENCE_CONNECTION: RefCell<Option<network::BrowserProtocolConnection>> = const { RefCell::new(None) };
+    static LAST_SENT_PLAYER_STATE: RefCell<Option<render::PlayerNetworkState>> = const { RefCell::new(None) };
 }
 
 thread_local! {
@@ -92,6 +93,64 @@ fn encode_reference_varint(value: i32) -> Vec<u8> {
     bytes
 }
 
+#[cfg(target_arch = "wasm32")]
+fn send_reference_movement(
+    connection: &mut network::BrowserProtocolConnection,
+) -> Result<(), JsValue> {
+    if connection.protocol_state() != protocol::ProtocolState::Play {
+        return Ok(());
+    }
+    let Some(current) = render::player_network_state() else { return Ok(()); };
+    let previous = LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow());
+
+    let packet = match previous {
+        None => {
+            let mut payload = Vec::with_capacity(33);
+            payload.extend_from_slice(&current.x.to_be_bytes());
+            payload.extend_from_slice(&current.y.to_be_bytes());
+            payload.extend_from_slice(&current.z.to_be_bytes());
+            payload.extend_from_slice(&current.yaw.to_be_bytes());
+            payload.extend_from_slice(&current.pitch.to_be_bytes());
+            payload.push(u8::from(current.on_ground));
+            Some((0x14, payload))
+        }
+        Some(previous) => {
+            let dx = current.x - previous.x;
+            let dy = current.y - previous.y;
+            let dz = current.z - previous.z;
+            let moved = dx * dx + dy * dy + dz * dz > 2.25e-7;
+            let turned = current.yaw != previous.yaw || current.pitch != previous.pitch;
+            let ground_changed = current.on_ground != previous.on_ground;
+            if moved {
+                let mut payload = Vec::with_capacity(33);
+                payload.extend_from_slice(&current.x.to_be_bytes());
+                payload.extend_from_slice(&current.y.to_be_bytes());
+                payload.extend_from_slice(&current.z.to_be_bytes());
+                payload.extend_from_slice(&current.yaw.to_be_bytes());
+                payload.extend_from_slice(&current.pitch.to_be_bytes());
+                payload.push(u8::from(current.on_ground));
+                Some((0x14, payload))
+            } else if turned {
+                let mut payload = Vec::with_capacity(9);
+                payload.extend_from_slice(&current.yaw.to_be_bytes());
+                payload.extend_from_slice(&current.pitch.to_be_bytes());
+                payload.push(u8::from(current.on_ground));
+                Some((0x15, payload))
+            } else if ground_changed {
+                Some((0x16, vec![u8::from(current.on_ground)]))
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some((packet_id, payload)) = packet {
+        connection.send_play_packet(packet_id, &payload)?;
+        LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = Some(current));
+    }
+    Ok(())
+}
+
 /// Open a browser WebSocket and begin the audited 26.1.2 reference login.
 /// This is a development connector; do not assume 26.3 compatibility.
 #[cfg(target_arch = "wasm32")]
@@ -116,6 +175,7 @@ pub fn connect_reference_server(
         websocket_url, host, port, username, uuid,
     )?;
     REFERENCE_CONNECTION.with(|slot| *slot.borrow_mut() = Some(connection));
+    LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
     Ok(())
 }
 
@@ -155,6 +215,7 @@ pub fn tick_reference_network() -> Result<u32, JsValue> {
                 protocol::ProtocolEvent::Send(_) => {}
             }
         }
+        send_reference_movement(connection)?;
         Ok(())
     })?;
     Ok(processed)
@@ -182,6 +243,7 @@ pub fn disconnect_reference_server() {
             let _ = connection.close();
         }
     });
+    LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
 }
 
 /// Apply a single complete 26.1.2 reference play packet to the live Rust world.
@@ -189,6 +251,35 @@ pub fn disconnect_reference_server() {
 #[wasm_bindgen]
 pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(), JsValue> {
     render::apply_reference_play_packet(packet_id, payload)
+}
+
+
+/// Send the reference start/finish dig sequence for the targeted server block.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn server_break_target() -> Result<bool, JsValue> {
+    let Some(start) = render::server_dig_action_payload(0) else { return Ok(false); };
+    let Some(finish) = render::server_dig_action_payload(2) else { return Ok(false); };
+    REFERENCE_CONNECTION.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(connection) = borrowed.as_mut() else { return Ok(false); };
+        connection.send_play_packet(0x1c, &start)?;
+        connection.send_play_packet(0x1c, &finish)?;
+        Ok(true)
+    })
+}
+
+/// Send the reference Use Item On packet for the targeted block face.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn server_place_target() -> Result<bool, JsValue> {
+    let Some(payload) = render::server_use_item_on_payload() else { return Ok(false); };
+    REFERENCE_CONNECTION.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(connection) = borrowed.as_mut() else { return Ok(false); };
+        connection.send_play_packet(0x2a, &payload)?;
+        Ok(true)
+    })
 }
 
 /// Break the block currently targeted by the player.
@@ -219,7 +310,19 @@ pub fn target_block_state() -> u32 {
 /// Select one of the nine browser hotbar slots.
 #[wasm_bindgen]
 pub fn select_hotbar_slot(slot: u32) -> bool {
-    BROWSER_HOTBAR.with(|hotbar| hotbar.borrow_mut().select(slot as usize))
+    let selected = BROWSER_HOTBAR.with(|hotbar| hotbar.borrow_mut().select(slot as usize));
+    #[cfg(target_arch = "wasm32")]
+    if selected {
+        let payload = (slot as u16).to_be_bytes();
+        REFERENCE_CONNECTION.with(|connection| {
+            if let Some(connection) = connection.borrow_mut().as_mut() {
+                if let Err(error) = connection.send_play_packet(0x22, &payload) {
+                    web_sys::console::warn_1(&error);
+                }
+            }
+        });
+    }
+    selected
 }
 
 /// Return the selected browser hotbar slot.
