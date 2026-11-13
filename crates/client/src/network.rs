@@ -65,6 +65,19 @@ mod browser {
             self.transport.state()
         }
 
+        pub fn close(&self) -> Result<(), JsValue> {
+            self.transport.close()
+        }
+
+        /// Queue one complete client play message for the audited reference protocol.
+        pub fn send_play_packet(&mut self, packet_id: i32, payload: &[u8]) -> Result<(), JsValue> {
+            if self.protocol.state() != crate::protocol::ProtocolState::Play {
+                return Err(JsValue::from_str("Play packet requested before the connection entered Play"));
+            }
+            self.pending_outbound.push_back(crate::protocol::encode_ws_packet(packet_id, payload));
+            self.flush_outbound()
+        }
+
         /// Flush queued handshake/config responses and process inbound packets.
         /// Non-send protocol events are returned to the game layer.
         pub fn tick(&mut self) -> Result<Vec<ProtocolEvent>, JsValue> {
