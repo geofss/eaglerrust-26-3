@@ -456,7 +456,11 @@ pub fn apply_reference_play_packet(packet_id: i32, payload: &[u8]) -> Result<(),
             crate::reference_play::ReferencePlayPacket::Chunk(chunk) => {
                 for section in chunk.sections {
                     renderer.world.replace_section(
-                        SectionPosition::new(chunk.chunk_x, i32::from(section.section_y), chunk.chunk_z),
+                        SectionPosition::new(
+                            chunk.chunk_x,
+                            crate::reference_play::reference_section_y_to_world(section.section_y),
+                            chunk.chunk_z,
+                        ),
                         section.data,
                     );
                 }
