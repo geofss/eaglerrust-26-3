@@ -44,6 +44,14 @@ impl ChunkManager {
         self.loaded.contains(&position)
     }
 
+    /// Rebuild the loaded-column index after restoring a saved local world.
+    pub fn adopt_loaded_world(&mut self, world: &World) {
+        self.loaded.clear();
+        for section in world.loaded_sections() {
+            self.loaded.insert(ChunkPosition::new(section.x, section.z));
+        }
+    }
+
     /// Update without a work limit. Useful for initial world setup and tests.
     pub fn update(
         &mut self,
