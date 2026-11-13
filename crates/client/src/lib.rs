@@ -169,8 +169,8 @@ fn send_reference_movement(
     Ok(())
 }
 
-/// Open a browser WebSocket and begin the audited 26.1.2 reference login.
-/// This is a development connector; do not assume 26.3 compatibility.
+/// Open the reference connector using the default Eagler subprotocol name.
+/// This remains a 26.1.2-derived protocol driver, not a 26.3 compatibility claim.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn connect_reference_server(
@@ -180,8 +180,27 @@ pub fn connect_reference_server(
     username: &str,
     uuid_hex: &str,
 ) -> Result<(), JsValue> {
+    connect_reference_server_with_protocol(
+        websocket_url, host, port, username, uuid_hex, "eaglercraft",
+    )
+}
+
+/// Open the reference connector while requesting an explicit WebSocket subprotocol.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn connect_reference_server_with_protocol(
+    websocket_url: &str,
+    host: &str,
+    port: u16,
+    username: &str,
+    uuid_hex: &str,
+    subprotocol: &str,
+) -> Result<(), JsValue> {
     if uuid_hex.len() != 32 || !uuid_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(JsValue::from_str("UUID must contain exactly 32 hexadecimal characters"));
+    }
+    if subprotocol.is_empty() {
+        return Err(JsValue::from_str("WebSocket subprotocol cannot be empty"));
     }
     let mut uuid = [0_u8; 16];
     for (index, byte) in uuid.iter_mut().enumerate() {
@@ -189,8 +208,8 @@ pub fn connect_reference_server(
         *byte = u8::from_str_radix(&uuid_hex[start..start + 2], 16)
             .map_err(|_| JsValue::from_str("Invalid UUID hex"))?;
     }
-    let connection = network::BrowserProtocolConnection::connect(
-        websocket_url, host, port, username, uuid,
+    let connection = network::BrowserProtocolConnection::connect_with_subprotocol(
+        websocket_url, host, port, username, uuid, subprotocol,
     )?;
     REFERENCE_CONNECTION.with(|slot| *slot.borrow_mut() = Some(connection));
     LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow_mut() = None);
@@ -263,6 +282,28 @@ pub fn tick_reference_network() -> Result<u32, JsValue> {
         Ok(())
     })?;
     Ok(processed)
+}
+
+/// Return the subprotocol selected by the active WebSocket connection.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn reference_websocket_protocol() -> String {
+    REFERENCE_CONNECTION.with(|slot| {
+        slot.borrow().as_ref()
+            .map(|connection| connection.negotiated_protocol())
+            .unwrap_or_default()
+    })
+}
+
+/// Return the WebSocket extensions negotiated by the browser, if any.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn reference_websocket_extensions() -> String {
+    REFERENCE_CONNECTION.with(|slot| {
+        slot.borrow().as_ref()
+            .map(|connection| connection.negotiated_extensions())
+            .unwrap_or_default()
+    })
 }
 
 /// Return the browser WebSocket state for the active reference connection.
