@@ -40,6 +40,9 @@ pub mod render;
 pub mod storage;
 pub mod world;
 
+#[cfg(test)]
+mod mock_server;
+
 /// Boot the browser-side client shell.
 #[wasm_bindgen]
 pub fn boot() -> Result<(), JsValue> {
