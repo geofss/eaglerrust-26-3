@@ -76,6 +76,18 @@ pub fn look(delta_x: f32, delta_y: f32) {
     render::look(delta_x, delta_y);
 }
 
+/// Set or clear the held primary break action.
+#[wasm_bindgen]
+pub fn set_breaking(held: bool) {
+    render::set_breaking(held);
+}
+
+/// Return normalized mining progress from 0.0 to 1.0.
+#[wasm_bindgen]
+pub fn mining_progress() -> f32 {
+    render::mining_progress()
+}
+
 /// Draw one frame using the current player camera.
 #[wasm_bindgen]
 pub fn draw_frame() -> Result<(), JsValue> {
@@ -238,6 +250,13 @@ pub fn tick_reference_network() -> Result<u32, JsValue> {
                 protocol::ProtocolEvent::ConfigurationPacket { .. } |
                 protocol::ProtocolEvent::ConfigurationFinished => {}
                 protocol::ProtocolEvent::Send(_) => {}
+            }
+        }
+        // Drain hold-to-mine actions after the renderer has generated them.
+        // The server remains authoritative; this client never removes server blocks optimistically.
+        for (status, position, face) in render::take_pending_dig_actions() {
+            if let Some(payload) = render::server_dig_action_payload_at(status, position, face) {
+                connection.send_play_packet(0x1c, &payload)?;
             }
         }
         send_reference_movement(connection)?;
