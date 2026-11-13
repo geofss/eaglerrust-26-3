@@ -13,7 +13,7 @@ The browser now drives a vanilla-inspired Rust player controller. Its movement b
 - **Rust + wasm-bindgen:** mesh generation, camera math, renderer setup, and frame submission.
 - **WebAssembly + WebGL1:** browser GPU rendering through web-sys bindings.
 - **HTML/CSS/JavaScript:** page shell, WASM bootstrap, keyboard/pointer/touch controls, hotbar HUD, block-action events, resize handling, and animation-frame scheduling.
-- **GitHub Actions:** native workspace tests and a browser WASM target check.
+- **GitHub Actions:** native workspace tests, browser WASM target validation, and a generated wasm-pack browser package build.
 
 ## Build locally
 
