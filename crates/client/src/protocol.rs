@@ -71,23 +71,6 @@ impl ProtocolSession {
         Ok(vec![encode_ws_packet(0x00, &handshake), encode_ws_packet(0x00, &login_hello)])
     }
 
-    /// Client Information and empty Known Packs for the reference config phase.
-    pub fn configuration_bootstrap(&self) -> Result<Vec<Vec<u8>>, ProtocolError> {
-        if self.state != ProtocolState::Configuration { return Err(ProtocolError::InvalidState); }
-        let mut info = Vec::with_capacity(24);
-        write_string(&mut info, "en_us");
-        info.push(8);                 // view distance
-        write_varint(&mut info, 0);   // chat enabled
-        info.push(1);                 // chat colors
-        info.push(0x7f);              // skin parts
-        write_varint(&mut info, 1);   // right hand
-        info.push(0);                 // text filtering disabled
-        info.push(1);                 // allow server listings
-        let mut known_packs = Vec::with_capacity(1);
-        write_varint(&mut known_packs, 0);
-        Ok(vec![encode_ws_packet(0x00, &info), encode_ws_packet(0x05, &known_packs)])
-    }
-
     /// Process one complete server WebSocket message. Send events contain
     /// complete client messages ready for the browser transport.
     pub fn process_server_message(&mut self, message: &[u8])
@@ -117,6 +100,8 @@ impl ProtocolSession {
                 }
                 0x02 => {
                     self.state = ProtocolState::Play;
+                    events.push(ProtocolEvent::Send(client_information_packet()));
+                    events.push(ProtocolEvent::Send(brand_plugin_message()));
                     events.push(ProtocolEvent::Send(encode_ws_packet(0x02, &[])));
                     events.push(ProtocolEvent::ConfigurationFinished);
                 }
@@ -124,7 +109,13 @@ impl ProtocolSession {
                     if payload.len() != 8 { return Err(ProtocolError::InvalidKeepAliveLength); }
                     events.push(ProtocolEvent::Send(encode_ws_packet(packet_id, payload)));
                 }
-                0x00 | 0x06 | 0x07 | 0x08 => events.push(ProtocolEvent::ConfigurationPacket {
+                0x08 => {
+                    events.push(ProtocolEvent::Send(known_packs_empty_packet()));
+                    events.push(ProtocolEvent::ConfigurationPacket {
+                        packet_id, payload: payload.to_vec(),
+                    });
+                }
+                0x00 | 0x06 | 0x07 => events.push(ProtocolEvent::ConfigurationPacket {
                     packet_id, payload: payload.to_vec(),
                 }),
                 _ => return Err(ProtocolError::UnexpectedPacket { state: self.state, packet_id }),
@@ -144,6 +135,30 @@ impl ProtocolSession {
         }
         Ok(events)
     }
+}
+
+fn client_information_packet() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(24);
+    write_string(&mut payload, "en_us");
+    payload.push(8);
+    write_varint(&mut payload, 0);
+    payload.push(1);
+    payload.push(0x7f);
+    write_varint(&mut payload, 1);
+    payload.push(0);
+    payload.push(1);
+    encode_ws_packet(0x00, &payload)
+}
+
+fn known_packs_empty_packet() -> Vec<u8> {
+    encode_ws_packet(0x05, &[0x00])
+}
+
+fn brand_plugin_message() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(48);
+    write_string(&mut payload, "minecraft:brand");
+    write_string(&mut payload, "eaglercraft-26.1.2-web");
+    encode_ws_packet(0x01, &payload)
 }
 
 /// Encode one 26.1.2-style WebSocket packet. No outer length prefix is added.
@@ -218,10 +233,18 @@ mod tests {
         assert_eq!(s.process_server_message(&encode_ws_packet(2, &[9, 8])),
             Ok(vec![ProtocolEvent::LoginSuccess(vec![9, 8])]));
         assert_eq!(s.state(), ProtocolState::Configuration);
-        let bootstrap = s.configuration_bootstrap().unwrap();
-        assert_eq!((id(&bootstrap[0]), id(&bootstrap[1])), (0, 5));
+        assert_eq!(s.process_server_message(&encode_ws_packet(0x08, &[0])),
+            Ok(vec![
+                ProtocolEvent::Send(known_packs_empty_packet()),
+                ProtocolEvent::ConfigurationPacket { packet_id: 0x08, payload: vec![0] },
+            ]));
         assert_eq!(s.process_server_message(&encode_ws_packet(2, &[])),
-            Ok(vec![ProtocolEvent::Send(encode_ws_packet(2, &[])), ProtocolEvent::ConfigurationFinished]));
+            Ok(vec![
+                ProtocolEvent::Send(client_information_packet()),
+                ProtocolEvent::Send(brand_plugin_message()),
+                ProtocolEvent::Send(encode_ws_packet(2, &[])),
+                ProtocolEvent::ConfigurationFinished,
+            ]));
         assert_eq!(s.state(), ProtocolState::Play);
     }
 
