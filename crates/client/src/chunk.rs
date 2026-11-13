@@ -199,6 +199,22 @@ mod tests {
     }
 
     #[test]
+    fn restored_world_columns_are_registered_without_regeneration() {
+        let mut world = World::new();
+        let generator = TerrainGenerator::new(31, 5, 2);
+        let mut original = ChunkManager::new(0);
+        original.update(&mut world, ChunkPosition::new(-2, 3), &generator);
+        let expected = world.get_block(crate::world::BlockPosition::new(-32, 0, 48));
+
+        let mut restored = ChunkManager::new(0);
+        restored.adopt_loaded_world(&world);
+        assert_eq!(restored.loaded_columns(), 1);
+        let update = restored.update(&mut world, ChunkPosition::new(-2, 3), &generator);
+        assert_eq!(update.loaded_columns, 0);
+        assert_eq!(world.get_block(crate::world::BlockPosition::new(-32, 0, 48)), expected);
+    }
+
+    #[test]
     fn negative_chunk_coordinates_stream_without_aliasing_zero() {
         let mut world = World::new();
         let mut manager = ChunkManager::new(0);
