@@ -245,6 +245,26 @@ pub fn set_key(key: &str, pressed: bool) {
     });
 }
 
+/// Return to a clean local prototype world after the reference connection closes.
+pub fn disconnect_reference_world() {
+    RENDERER.with(|slot| {
+        if let Some(renderer) = slot.borrow_mut().as_mut() {
+            for (_, mesh) in renderer.section_meshes.drain() {
+                renderer.gl.delete_buffer(Some(&mesh.buffer));
+            }
+            let radius = renderer.chunk_manager.radius();
+            renderer.world = World::new();
+            renderer.chunk_manager = ChunkManager::new(radius);
+            renderer.server_world_active = false;
+            renderer.breaking_held = false;
+            renderer.mining.reset();
+            renderer.active_dig = None;
+            renderer.completed_dig = None;
+            renderer.pending_dig_actions.clear();
+        }
+    });
+}
+
 /// Set or clear the held primary break action. The frame loop handles abort packets.
 pub fn set_breaking(held: bool) {
     RENDERER.with(|slot| {
