@@ -27,6 +27,7 @@ pub mod network;
 pub mod physics;
 pub mod packet;
 pub mod protocol;
+pub mod reference_play;
 pub mod player;
 pub mod raycast;
 pub mod render;
