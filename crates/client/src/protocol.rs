@@ -16,7 +16,7 @@ pub enum ProtocolState { Handshake, Login, Configuration, Play, Disconnected }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolError {
     InvalidState, InvalidHost, InvalidPort, InvalidUsername,
-    TruncatedPacket, VarIntTooWide, InvalidKeepAliveLength,
+    TruncatedPacket, VarIntTooWide, InvalidKeepAliveLength, InvalidString,
     UnexpectedPacket { state: ProtocolState, packet_id: i32 },
 }
 
@@ -86,6 +86,17 @@ impl ProtocolSession {
                 0x02 => {
                     self.state = ProtocolState::Configuration;
                     events.push(ProtocolEvent::LoginSuccess(payload.to_vec()));
+                }
+                0x04 => {
+                    let (message_id, id_bytes) = read_varint(payload)?;
+                    let channel_bytes = skip_utf8_string(&payload[id_bytes..])?;
+                    if channel_bytes > payload.len() - id_bytes {
+                        return Err(ProtocolError::InvalidString);
+                    }
+                    let mut response = Vec::with_capacity(6);
+                    write_varint(&mut response, message_id);
+                    response.push(0); // no plugin response data
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x05, &response)));
                 }
                 0x03 => {
                     self.state = ProtocolState::Disconnected;
@@ -201,6 +212,17 @@ fn write_string(out: &mut Vec<u8>, value: &str) {
     out.extend_from_slice(value.as_bytes());
 }
 
+fn skip_utf8_string(bytes: &[u8]) -> Result<usize, ProtocolError> {
+    let (length, prefix_bytes) = read_varint(bytes)?;
+    if length < 0 || length as usize > 131_072 {
+        return Err(ProtocolError::InvalidString);
+    }
+    let end = prefix_bytes.checked_add(length as usize).ok_or(ProtocolError::InvalidString)?;
+    let value = bytes.get(prefix_bytes..end).ok_or(ProtocolError::TruncatedPacket)?;
+    std::str::from_utf8(value).map_err(|_| ProtocolError::InvalidString)?;
+    Ok(end)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +246,20 @@ mod tests {
         assert_eq!(s.state(), ProtocolState::Handshake);
         s.begin_login("host", 25565, "Valid_1", [0; 16]).unwrap();
         assert_eq!(s.begin_login("host", 25565, "Valid_1", [0; 16]), Err(ProtocolError::InvalidState));
+    }
+
+    #[test]
+    fn login_plugin_request_gets_empty_response_with_matching_id() {
+        let mut s = ProtocolSession::new();
+        s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
+        let mut payload = Vec::new();
+        write_varint(&mut payload, 42);
+        write_string(&mut payload, "minecraft:test");
+        payload.extend_from_slice(&[1, 2, 3]);
+        let events = s.process_server_message(&encode_ws_packet(0x04, &payload)).unwrap();
+        let expected = encode_ws_packet(0x05, &[42, 0]);
+        assert_eq!(events, vec![ProtocolEvent::Send(expected)]);
+        assert_eq!(s.state(), ProtocolState::Login);
     }
 
     #[test]
