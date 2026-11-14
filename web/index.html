@@ -386,6 +386,7 @@
       singleplayer_game_mode,
       set_singleplayer_paused,
       apply_singleplayer_worker_snapshot,
+      apply_singleplayer_worker_section_deltas,
       set_singleplayer_worker_active,
       singleplayer_worker_player_state,
       take_singleplayer_worker_edits,
@@ -513,6 +514,16 @@
                 workerRequests.delete(message.requestId);
                 pending.reject(error);
               }
+            }
+            return;
+          }
+          if (message.type === "section-deltas") {
+            try {
+              apply_singleplayer_worker_section_deltas(message.updates || [], message.removed || []);
+              if (pending) { workerRequests.delete(message.requestId); pending.resolve(message); }
+            } catch (error) {
+              singleplayerStatus.textContent = "Section sync failed: " + error;
+              requestWorkerSave().catch(() => {});
             }
             return;
           }
