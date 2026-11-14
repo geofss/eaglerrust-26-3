@@ -726,6 +726,9 @@ mod tests {
     fn configuration_keepalive_and_ping_are_echoed() {
         let mut s = ProtocolSession::new();
         s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
+        // The server must send Login Success (0x02) before Configuration.
+        s.process_server_message(&encode_ws_packet(0x02, &[])).unwrap();
+        // Finish Configuration (0x03) transitions the session into Play.
         s.process_server_message(&encode_ws_packet(0x03, &[])).unwrap();
         let keep_alive = 123456_i64.to_be_bytes();
         assert_eq!(
