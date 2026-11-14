@@ -115,10 +115,11 @@ impl ProtocolSession {
                     events.push(ProtocolEvent::ServerDisconnect(payload.to_vec()));
                 }
                 0x03 => {
-                    self.state = ProtocolState::Play;
-                    events.push(ProtocolEvent::Send(client_information_packet()));
-                    events.push(ProtocolEvent::Send(brand_plugin_message()));
+                    // Finish Configuration is the server's final configuration packet.
+                    // Only acknowledge it here; client information and brand were sent
+                    // immediately after the Eagler V5 login transition.
                     events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
+                    self.state = ProtocolState::Play;
                     events.push(ProtocolEvent::ConfigurationFinished);
                 }
                 0x04 => {
@@ -417,10 +418,12 @@ impl EaglerV5Session {
                 let uuid = self.granted_uuid.ok_or(ProtocolError::InvalidState)?;
                 let login_success = encode_java_login_success(&name, uuid, self.session_uuid);
                 events.push(ProtocolEvent::LoginSuccess(login_success));
-                // CLIENT_FINISH_LOGIN (0x08) already made the proxy enter play state.
-                // EaglerXServer sends Java Login Acknowledged (0x03) to its backend
-                // internally; the Eagler client must not send that backend-only packet.
+                // The proxy has completed Eagler login. Java 1.20.2+ enters
+                // Configuration here; send client settings before the server's
+                // configuration stream begins, not when Finish Configuration arrives.
                 self.state = if self.minecraft_protocol >= 764 {
+                    events.push(ProtocolEvent::Send(client_information_packet()));
+                    events.push(ProtocolEvent::Send(brand_plugin_message()));
                     ProtocolState::Configuration
                 } else {
                     ProtocolState::Play
@@ -510,8 +513,9 @@ fn client_information_packet() -> Vec<u8> {
     payload.push(1);
     payload.push(0x7f);
     write_varint(&mut payload, 1);
-    payload.push(0);
-    payload.push(1);
+    payload.push(0); // text filtering disabled for offline Eagler profile
+    payload.push(1); // allow server listings
+    write_varint(&mut payload, 0); // particle status: all
     encode_ws_packet(0x00, &payload)
 }
 
@@ -668,9 +672,11 @@ mod tests {
 
         let events = session.process_server_message(&[0x09]).unwrap();
         assert_eq!(session.state(), ProtocolState::Configuration);
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 3);
         let ProtocolEvent::LoginSuccess(login) = &events[0] else { panic!("expected synthetic Login Success") };
         assert_eq!(&login[..16], &[0x11; 16]);
+        assert_eq!(events[1], ProtocolEvent::Send(client_information_packet()));
+        assert_eq!(events[2], ProtocolEvent::Send(brand_plugin_message()));
     }
 
     #[test]
@@ -792,8 +798,6 @@ mod tests {
         assert_eq!(brand_plugin_message()[0], 0x02);
         assert_eq!(s.process_server_message(&encode_ws_packet(0x03, &[])),
             Ok(vec![
-                ProtocolEvent::Send(client_information_packet()),
-                ProtocolEvent::Send(brand_plugin_message()),
                 ProtocolEvent::Send(encode_ws_packet(0x03, &[])),
                 ProtocolEvent::ConfigurationFinished,
             ]));
