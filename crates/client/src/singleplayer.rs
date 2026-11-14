@@ -5,9 +5,10 @@ use crate::storage::{decode_world, encode_world, SaveError};
 use crate::world::World;
 
 const MAGIC: &[u8; 4] = b"ERSP";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const HEADER_V1_BYTES: usize = 48;
 const HEADER_V2_BYTES: usize = 52;
+const HEADER_V3_BYTES: usize = 68;
 
 #[derive(Debug, Clone)]
 pub struct SingleplayerSave {
@@ -17,6 +18,8 @@ pub struct SingleplayerSave {
     pub pitch: f32,
     /// 0 survival, 1 creative, 2 adventure, 3 spectator.
     pub game_mode: u8,
+    pub world_time: u64,
+    pub day_time: u64,
     pub world: World,
 }
 
@@ -61,7 +64,7 @@ impl SingleplayerSave {
         let world = encode_world(&self.world);
         let world_len = u32::try_from(world.len()).map_err(|_| SingleplayerSaveError::InvalidLength)?;
         if self.game_mode > 3 { return Err(SingleplayerSaveError::InvalidGameMode(self.game_mode)); }
-        let mut bytes = Vec::with_capacity(HEADER_V2_BYTES + world.len());
+        let mut bytes = Vec::with_capacity(HEADER_V3_BYTES + world.len());
         bytes.extend_from_slice(MAGIC);
         bytes.extend_from_slice(&VERSION.to_le_bytes());
         bytes.extend_from_slice(&self.seed.to_le_bytes());
@@ -69,6 +72,8 @@ impl SingleplayerSave {
         bytes.extend_from_slice(&self.yaw.to_le_bytes());
         bytes.extend_from_slice(&self.pitch.to_le_bytes());
         bytes.extend_from_slice(&(u32::from(self.game_mode)).to_le_bytes());
+        bytes.extend_from_slice(&self.world_time.to_le_bytes());
+        bytes.extend_from_slice(&self.day_time.to_le_bytes());
         bytes.extend_from_slice(&world_len.to_le_bytes());
         bytes.extend_from_slice(&world);
         Ok(bytes)
@@ -78,10 +83,10 @@ impl SingleplayerSave {
         if bytes.len() < HEADER_V1_BYTES { return Err(SingleplayerSaveError::Truncated); }
         if &bytes[..4] != MAGIC { return Err(SingleplayerSaveError::InvalidMagic); }
         let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        if version != 1 && version != VERSION {
+        if version != 1 && version != 2 && version != VERSION {
             return Err(SingleplayerSaveError::UnsupportedVersion(version));
         }
-        let header_bytes = if version == 1 { HEADER_V1_BYTES } else { HEADER_V2_BYTES };
+        let header_bytes = match version { 1 => HEADER_V1_BYTES, 2 => HEADER_V2_BYTES, _ => HEADER_V3_BYTES };
         if bytes.len() < header_bytes { return Err(SingleplayerSaveError::Truncated); }
         let seed = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
         let mut cursor = 12;
@@ -102,6 +107,15 @@ impl SingleplayerSave {
             u8::try_from(mode).ok().filter(|value| *value <= 3)
                 .ok_or(SingleplayerSaveError::InvalidGameMode(u8::try_from(mode).unwrap_or(u8::MAX)))?
         };
+        let (world_time, day_time) = if version >= 3 {
+            let world_time = u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
+            cursor += 8;
+            let day_time = u64::from_le_bytes(bytes[cursor..cursor + 8].try_into().unwrap());
+            cursor += 8;
+            (world_time, day_time % 24_000)
+        } else {
+            (0, 0)
+        };
         let world_len = u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().unwrap()) as usize;
         cursor += 4;
         if !player_position.iter().all(|v| v.is_finite()) || !yaw.is_finite() || !pitch.is_finite() {
@@ -110,7 +124,7 @@ impl SingleplayerSave {
         let end = cursor.checked_add(world_len).ok_or(SingleplayerSaveError::InvalidLength)?;
         if end != bytes.len() { return Err(SingleplayerSaveError::InvalidLength); }
         let world = decode_world(&bytes[cursor..end])?;
-        Ok(Self { seed, player_position, yaw, pitch, game_mode, world })
+        Ok(Self { seed, player_position, yaw, pitch, game_mode, world_time, day_time, world })
     }
 }
 
@@ -129,6 +143,8 @@ mod tests {
             yaw: 1.25,
             pitch: -0.5,
             game_mode: 0,
+            world_time: 1234,
+            day_time: 5678,
             world,
         };
         let restored = SingleplayerSave::decode(&save.encode().unwrap()).unwrap();
@@ -137,31 +153,45 @@ mod tests {
         assert_eq!(restored.yaw, save.yaw);
         assert_eq!(restored.pitch, save.pitch);
         assert_eq!(restored.game_mode, save.game_mode);
+        assert_eq!(restored.world_time, save.world_time);
+        assert_eq!(restored.day_time, save.day_time);
         assert_eq!(restored.world.get_block(BlockPosition::new(-3, 8, 17)), BlockStateId(42));
     }
 
     #[test]
-    fn reads_version_one_saves_as_creative() {
+    fn reads_legacy_version_one_and_two_saves() {
         let save = SingleplayerSave {
             seed: 99, player_position: [1.0, 2.0, 3.0], yaw: 0.5, pitch: -0.25,
-            game_mode: 1, world: World::new(),
+            game_mode: 2, world_time: 777, day_time: 888, world: World::new(),
         };
-        let v2 = save.encode().unwrap();
+        let v3 = save.encode().unwrap();
+
+        let mut v2 = Vec::new();
+        v2.extend_from_slice(&v3[..48]);
+        v2.extend_from_slice(&v3[64..68]);
+        v2.extend_from_slice(&v3[68..]);
+        v2[4..8].copy_from_slice(&2_u32.to_le_bytes());
+        let restored_v2 = SingleplayerSave::decode(&v2).unwrap();
+        assert_eq!(restored_v2.seed, 99);
+        assert_eq!(restored_v2.game_mode, 2);
+        assert_eq!(restored_v2.world_time, 0);
+
         let mut v1 = Vec::new();
-        v1.extend_from_slice(&v2[..44]);
-        v1.extend_from_slice(&v2[48..52]);
-        v1.extend_from_slice(&v2[52..]);
+        v1.extend_from_slice(&v3[..44]);
+        v1.extend_from_slice(&v3[64..68]);
+        v1.extend_from_slice(&v3[68..]);
         v1[4..8].copy_from_slice(&1_u32.to_le_bytes());
-        let restored = SingleplayerSave::decode(&v1).unwrap();
-        assert_eq!(restored.seed, 99);
-        assert_eq!(restored.game_mode, 1);
+        let restored_v1 = SingleplayerSave::decode(&v1).unwrap();
+        assert_eq!(restored_v1.seed, 99);
+        assert_eq!(restored_v1.game_mode, 1);
+        assert_eq!(restored_v1.day_time, 0);
     }
 
     #[test]
     fn rejects_invalid_game_modes() {
         let save = SingleplayerSave {
             seed: 1, player_position: [0.0; 3], yaw: 0.0, pitch: 0.0,
-            game_mode: 4, world: World::new(),
+            game_mode: 4, world_time: 0, day_time: 0, world: World::new(),
         };
         assert!(matches!(save.encode(), Err(SingleplayerSaveError::InvalidGameMode(4))));
     }
