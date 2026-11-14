@@ -357,6 +357,12 @@ pub fn take_singleplayer_autosave_request() -> bool {
     render::take_singleplayer_autosave_request()
 }
 
+/// Pause or resume the local simulation, typically when the browser tab is hidden.
+#[wasm_bindgen]
+pub fn set_singleplayer_paused(paused: bool) {
+    render::set_singleplayer_paused(paused);
+}
+
 /// Create a new local singleplayer world from a numeric seed.
 #[wasm_bindgen]
 pub fn create_singleplayer_world(seed: u32) -> Result<(), JsValue> {
