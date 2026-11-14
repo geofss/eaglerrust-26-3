@@ -8,6 +8,12 @@ impl Hotbar{
  pub fn selected_slot(&self)->usize{self.selected}
  pub fn select(&mut self,slot:usize)->bool{if slot>=HOTBAR_SLOTS{return false;}self.selected=slot;true}
  pub fn slot(&self,index:usize)->Option<ItemStack>{self.slots.get(index).copied().flatten()}
+ pub fn set_slot(&mut self,index:usize,item:BlockStateId,count:u8)->bool{
+  let Some(slot)=self.slots.get_mut(index)else{return false;};
+  *slot=if count==0{None}else{Some(ItemStack{item,count})};
+  true
+ }
+ pub fn clear(&mut self){self.slots=[None;HOTBAR_SLOTS];self.selected=0;}
  pub fn selected(&self)->Option<ItemStack>{self.slot(self.selected)}
  pub fn add(&mut self,item:BlockStateId,mut count:u8)->u8{
   for stack in self.slots.iter_mut().flatten().filter(|s|s.item==item&&s.count<STACK_LIMIT){let moved=count.min(STACK_LIMIT-stack.count);stack.count+=moved;count-=moved;if count==0{return 0;}}

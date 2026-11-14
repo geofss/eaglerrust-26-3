@@ -21,4 +21,9 @@ web-sys = { version = "0.3", features = [
     "WebGlUniformLocation",
     "WebGlTexture",
     "Window",
+    "BinaryType",
+    "CloseEvent",
+    "Event",
+    "MessageEvent",
+    "WebSocket",
 ] }

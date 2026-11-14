@@ -44,6 +44,14 @@ impl ChunkManager {
         self.loaded.contains(&position)
     }
 
+    /// Rebuild the loaded-column index after restoring a saved local world.
+    pub fn adopt_loaded_world(&mut self, world: &World) {
+        self.loaded.clear();
+        for section in world.loaded_sections() {
+            self.loaded.insert(ChunkPosition::new(section.x, section.z));
+        }
+    }
+
     /// Update without a work limit. Useful for initial world setup and tests.
     pub fn update(
         &mut self,
@@ -188,6 +196,22 @@ mod tests {
         assert_eq!(first.pending_unloads, 8);
         assert_eq!(first.pending_loads, 9);
         assert_eq!(manager.loaded_columns(), 8);
+    }
+
+    #[test]
+    fn restored_world_columns_are_registered_without_regeneration() {
+        let mut world = World::new();
+        let generator = TerrainGenerator::new(31, 5, 2);
+        let mut original = ChunkManager::new(0);
+        original.update(&mut world, ChunkPosition::new(-2, 3), &generator);
+        let expected = world.get_block(crate::world::BlockPosition::new(-32, 0, 48));
+
+        let mut restored = ChunkManager::new(0);
+        restored.adopt_loaded_world(&world);
+        assert_eq!(restored.loaded_columns(), 1);
+        let update = restored.update(&mut world, ChunkPosition::new(-2, 3), &generator);
+        assert_eq!(update.loaded_columns, 0);
+        assert_eq!(world.get_block(crate::world::BlockPosition::new(-32, 0, 48)), expected);
     }
 
     #[test]
