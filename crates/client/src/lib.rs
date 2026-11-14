@@ -110,6 +110,9 @@ fn encode_reference_varint(value: i32) -> Vec<u8> {
     bytes
 }
 
+fn reference_server_rotation(yaw: f32, pitch: f32) -> (f32, f32) {
+    (yaw.to_degrees() + 180.0, -pitch.to_degrees())
+}
 #[cfg(target_arch = "wasm32")]
 fn send_reference_movement(
     connection: &mut network::BrowserProtocolConnection,
@@ -119,8 +122,7 @@ fn send_reference_movement(
     }
     let Some(current) = render::player_network_state() else { return Ok(()); };
     // Convert the local radian camera convention to reference vanilla degrees.
-    let server_yaw = current.yaw.to_degrees() + 180.0;
-    let server_pitch = -current.pitch.to_degrees();
+    let (server_yaw, server_pitch) = reference_server_rotation(current.yaw, current.pitch);
     let previous = LAST_SENT_PLAYER_STATE.with(|slot| *slot.borrow());
 
     let packet = match previous {
@@ -146,14 +148,14 @@ fn send_reference_movement(
                 payload.extend_from_slice(&current.x.to_be_bytes());
                 payload.extend_from_slice(&current.y.to_be_bytes());
                 payload.extend_from_slice(&current.z.to_be_bytes());
-                payload.extend_from_slice(&current.yaw.to_be_bytes());
-                payload.extend_from_slice(&current.pitch.to_be_bytes());
+                payload.extend_from_slice(&server_yaw.to_be_bytes());
+                payload.extend_from_slice(&server_pitch.to_be_bytes());
                 payload.push(u8::from(current.on_ground));
                 Some((0x14, payload))
             } else if turned {
                 let mut payload = Vec::with_capacity(9);
-                payload.extend_from_slice(&current.yaw.to_be_bytes());
-                payload.extend_from_slice(&current.pitch.to_be_bytes());
+                payload.extend_from_slice(&server_yaw.to_be_bytes());
+                payload.extend_from_slice(&server_pitch.to_be_bytes());
                 payload.push(u8::from(current.on_ground));
                 Some((0x15, payload))
             } else if ground_changed {
@@ -468,4 +470,23 @@ pub fn hotbar_item(slot: u32) -> u32 {
 #[wasm_bindgen]
 pub fn hotbar_count(slot: u32) -> u32 {
     BROWSER_HOTBAR.with(|hotbar| hotbar.borrow().slot(slot as usize).map(|stack| u32::from(stack.count)).unwrap_or(0))
+}
+
+#[cfg(test)]
+mod movement_rotation_tests {
+    use super::reference_server_rotation;
+
+    #[test]
+    fn local_camera_angles_are_encoded_as_server_degrees() {
+        let (yaw, pitch) = reference_server_rotation(0.0, 0.0);
+        assert!((yaw - 180.0).abs() < 1.0e-4);
+        assert!(pitch.abs() < 1.0e-4);
+
+        let (yaw, pitch) = reference_server_rotation(
+            std::f32::consts::FRAC_PI_2,
+            std::f32::consts::FRAC_PI_4,
+        );
+        assert!((yaw - 270.0).abs() < 1.0e-4);
+        assert!((pitch + 45.0).abs() < 1.0e-4);
+    }
 }
