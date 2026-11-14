@@ -495,6 +495,18 @@ mod tests {
     }
 
     #[test]
+    fn section_state_slice_preserves_canonical_y_z_x_order_for_worker_deltas() {
+        let mut world = World::new();
+        let position = SectionPosition::new(-2, 3, 4);
+        let mut section = ChunkSection::new();
+        section.set(LocalBlockPosition { x: 7, y: 5, z: 9 }, BlockStateId(42));
+        world.replace_section(position, section);
+        let states = world.section_states(position).unwrap();
+        assert_eq!(states.len(), SECTION_VOLUME);
+        assert_eq!(states[LocalBlockPosition { x: 7, y: 5, z: 9 }.index()], BlockStateId(42));
+    }
+
+    #[test]
     fn loaded_sections_are_returned_in_stable_order() {
         let mut world = World::new();
         world.set_block(BlockPosition::new(32, 0, 0), BlockStateId(1));
