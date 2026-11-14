@@ -133,7 +133,12 @@ impl ProtocolSession {
                 0x00 | 0x06 | 0x07 => events.push(ProtocolEvent::ConfigurationPacket {
                     packet_id, payload: payload.to_vec(),
                 }),
-                _ => return Err(ProtocolError::UnexpectedPacket { state: self.state, packet_id }),
+                // Modern registry, tag, feature-flag, recipe and data-component
+                // packets vary by protocol revision. Preserve unknown payloads for
+                // diagnostics instead of killing the connection during sync.
+                _ => events.push(ProtocolEvent::ConfigurationPacket {
+                    packet_id, payload: payload.to_vec(),
+                }),
             },
             ProtocolState::Play => match packet_id {
                 0x1a => {
@@ -680,6 +685,26 @@ mod tests {
                 ProtocolEvent::ConfigurationFinished,
             ]));
         assert_eq!(s.state(), ProtocolState::Play);
+    }
+
+    #[test]
+    fn unknown_configuration_packets_are_preserved_for_diagnostics() {
+        let mut session = EaglerV5Session::new();
+        session.begin_login("proxy.example", 25565, "RustPlayer", [9; 16]).unwrap();
+        session.process_server_message(&eagler_server_version()).unwrap();
+        let mut allow = vec![0x05, 10];
+        allow.extend_from_slice(b"RustPlayer");
+        allow.extend_from_slice(&[0x11; 16]);
+        session.process_server_message(&allow).unwrap();
+        session.process_server_message(&[0x09]).unwrap();
+        let payload = [0xDE, 0xAD, 0xBE, 0xEF];
+        assert_eq!(
+            session.process_server_message(&encode_ws_packet(0x7f, &payload)).unwrap(),
+            vec![ProtocolEvent::ConfigurationPacket {
+                packet_id: 0x7f,
+                payload: payload.to_vec(),
+            }]
+        );
     }
 
     #[test]
