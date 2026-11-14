@@ -358,7 +358,7 @@
       <p>Eaglercraft V5 handshake · Minecraft protocol 777 (26.3 target). Standard EaglerXServer normally does not require an HTTP WebSocket subprotocol. Gameplay packet coverage is still under development. WebSocket lifecycle and packet diagnostics are printed in the browser developer console.</p>
       <div class="connect-grid">
         <label>WebSocket endpoint
-          <input id="ws-url" value="wss://" placeholder="wss://server.example/ws" autocomplete="url">
+          <input id="ws-url" value="wss://" placeholder="wss://server.example/ws or ws://127.0.0.1:8765" autocomplete="url">
         </label>
         <label>Optional HTTP WebSocket subprotocol
           <input id="ws-subprotocol" value="" placeholder="Leave blank for standard Eagler V5" autocomplete="off">
@@ -700,8 +700,11 @@
           let endpoint = rawEndpoint;
           if (/^https:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^https:/i, "wss:");
           else if (/^http:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^http:/i, "wss:");
-          else if (/^ws:\/\//i.test(endpoint)) endpoint = endpoint.replace(/^ws:/i, "wss:");
-          else if (!/^wss:\/\//i.test(endpoint)) endpoint = `wss://${endpoint}`;
+          else if (/^ws:\/\//i.test(endpoint)) {
+            const local = new URL(endpoint);
+            const isLoopback = ["localhost", "127.0.0.1", "[::1]"].includes(local.hostname);
+            if (!isLoopback) endpoint = endpoint.replace(/^ws:/i, "wss:");
+          } else if (!/^wss:\/\//i.test(endpoint)) endpoint = `wss://${endpoint}`;
           const parsedEndpoint = new URL(endpoint);
           host = parsedEndpoint.hostname;
           if (parsedEndpoint.port) port = Number(parsedEndpoint.port);
