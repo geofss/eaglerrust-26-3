@@ -608,3 +608,28 @@ pub fn worker_server_save() -> Result<Vec<u8>, JsValue> {
         server.encode_save().map_err(|error| JsValue::from_str(&error.to_string()))
     })
 }
+
+
+/// Activate the worker-owned simulation and freeze the renderer's shadow server.
+#[wasm_bindgen]
+pub fn set_singleplayer_worker_active(active: bool) {
+    render::set_singleplayer_worker_active(active);
+}
+
+/// Apply an authoritative snapshot received from the dedicated worker.
+#[wasm_bindgen]
+pub fn apply_singleplayer_worker_snapshot(bytes: &[u8]) -> Result<(), JsValue> {
+    render::apply_singleplayer_worker_snapshot(bytes)
+}
+
+/// Player position and camera state for the worker tick input.
+#[wasm_bindgen]
+pub fn singleplayer_worker_player_state() -> Vec<f64> {
+    render::singleplayer_worker_player_state()
+}
+
+/// Drain renderer block edits so the worker can validate and commit them.
+#[wasm_bindgen]
+pub fn take_singleplayer_worker_edits() -> Vec<i32> {
+    render::take_singleplayer_worker_edits()
+}
