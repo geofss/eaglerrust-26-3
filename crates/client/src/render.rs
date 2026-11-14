@@ -53,6 +53,8 @@ struct Renderer {
     world_seed: u32,
     singleplayer_server: Option<IntegratedServer>,
     singleplayer_paused: bool,
+    singleplayer_worker_active: bool,
+    worker_edits: Vec<[i32; 4]>,
     autosave_due: bool,
     player: Player,
     camera_yaw: f32,
@@ -194,6 +196,8 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             world_seed,
             singleplayer_server: Some(singleplayer_server),
             singleplayer_paused: false,
+            singleplayer_worker_active: false,
+            worker_edits: Vec::new(),
             autosave_due: false,
             player,
             camera_yaw: 0.0,
@@ -509,7 +513,7 @@ pub fn draw_frame() -> Result<(), JsValue> {
                 renderer.player.position.x.floor() as i32, 0,
                 renderer.player.position.z.floor() as i32,
             ).chunk();
-            if !renderer.server_world_active {
+            if !renderer.server_world_active && !renderer.singleplayer_worker_active {
                 let server_player = ServerPlayerState {
                     position: [
                         renderer.player.position.x,
@@ -587,6 +591,9 @@ pub fn draw_frame() -> Result<(), JsValue> {
                     renderer.world.set_block(position, crate::world::AIR)
                 };
                 if changed {
+                    if renderer.singleplayer_worker_active {
+                        renderer.worker_edits.push([position.x, position.y, position.z, 0]);
+                    }
                     renderer.world.set_block(position, crate::world::AIR);
                     update_dirty_section_meshes(renderer);
                 }
@@ -862,6 +869,9 @@ pub fn break_target() -> bool {
         };
         if !changed { return false; }
         renderer.world.set_block(hit.position, crate::world::AIR);
+        if renderer.singleplayer_worker_active {
+            renderer.worker_edits.push([hit.position.x, hit.position.y, hit.position.z, 0]);
+        }
         update_dirty_section_meshes(renderer)
     })
 }
@@ -887,6 +897,9 @@ pub fn place_target(state: u32) -> bool {
         };
         if !changed { return false; }
         renderer.world.set_block(destination, BlockStateId(state));
+        if renderer.singleplayer_worker_active {
+            renderer.worker_edits.push([destination.x, destination.y, destination.z, state as i32]);
+        }
         update_dirty_section_meshes(renderer)
     })
 }
@@ -1295,4 +1308,77 @@ mod tests {
             3, BlockPosition::new(0, 0, 0), [0, 1, 0]
         ).is_none());
     }
+}
+
+
+/// Mark the renderer's local world as a read-only mirror of the dedicated worker.
+pub fn set_singleplayer_worker_active(active: bool) {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(renderer) = borrowed.as_mut() else { return; };
+        if renderer.server_world_active { return; }
+        renderer.singleplayer_worker_active = active;
+        if let Some(server) = renderer.singleplayer_server.as_mut() {
+            server.set_paused(active || renderer.singleplayer_paused);
+        }
+        renderer.worker_edits.clear();
+        renderer.tick_accumulator = 0.0;
+        renderer.last_tick_ms = js_sys::Date::now();
+    });
+}
+
+/// Apply a complete worker snapshot to the renderer's collision/mesh mirror.
+/// The worker remains authoritative; the local server object is retained paused
+/// only as a compatibility snapshot for the existing save/game-mode UI.
+pub fn apply_singleplayer_worker_snapshot(bytes: &[u8]) -> Result<(), JsValue> {
+    let save = crate::singleplayer::SingleplayerSave::decode(bytes)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let renderer = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        if renderer.server_world_active {
+            return Err(JsValue::from_str("Cannot apply a singleplayer snapshot during multiplayer"));
+        }
+        let mut server = IntegratedServer::from_save(save, renderer.chunk_manager.radius());
+        server.set_paused(true);
+        let world = server.world().clone();
+        let meshes = build_section_gpu_meshes(&renderer.gl, &world, renderer.atlas_layout)?;
+        for (_, mesh) in renderer.section_meshes.drain() {
+            renderer.gl.delete_buffer(Some(&mesh.buffer));
+        }
+        renderer.world = world;
+        renderer.chunk_manager = server.chunks().clone();
+        renderer.world_seed = server.seed();
+        renderer.singleplayer_server = Some(server);
+        renderer.singleplayer_worker_active = true;
+        renderer.section_meshes = meshes;
+        Ok(())
+    })
+}
+
+/// Current player state sent to the worker at the simulation tick rate.
+pub fn singleplayer_worker_player_state() -> Vec<f64> {
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let Some(renderer) = borrowed.as_ref() else { return Vec::new(); };
+        vec![
+            renderer.player.position.x,
+            renderer.player.position.y,
+            renderer.player.position.z,
+            f64::from(renderer.camera_yaw),
+            f64::from(renderer.camera_pitch),
+            if renderer.player.on_ground { 1.0 } else { 0.0 },
+        ]
+    })
+}
+
+/// Drain optimistic renderer edits for authoritative validation by the worker.
+/// Each four integers are x, y, z, and block-state ID (zero means air).
+pub fn take_singleplayer_worker_edits() -> Vec<i32> {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(renderer) = borrowed.as_mut() else { return Vec::new(); };
+        let edits = std::mem::take(&mut renderer.worker_edits);
+        edits.into_iter().flat_map(|edit| edit.into_iter()).collect()
+    })
 }
