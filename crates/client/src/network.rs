@@ -115,9 +115,16 @@ mod browser {
             self.flush_outbound()?;
             let mut delivered = Vec::new();
             while let Some(message) = self.transport.try_receive() {
-                log_protocol_message("RX", self.protocol.state(), &message);
+                let state_before = self.protocol.state();
+                log_protocol_message("RX", state_before, &message);
                 let events = self.protocol.process_server_message(&message)
                     .map_err(|error| JsValue::from_str(&format!("protocol packet rejected: {error:?}")))?;
+                let state_after = self.protocol.state();
+                if state_after != state_before {
+                    web_sys::console::log_1(&JsValue::from_str(&format!(
+                        "[EaglerRust] STATE {state_before:?} -> {state_after:?}"
+                    )));
+                }
                 for event in events {
                     match event {
                         ProtocolEvent::Send(bytes) => self.pending_outbound.push_back(bytes),
