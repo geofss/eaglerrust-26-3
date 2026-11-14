@@ -150,6 +150,7 @@ mod tests {
         let mut v1 = Vec::new();
         v1.extend_from_slice(&v2[..44]);
         v1.extend_from_slice(&v2[48..52]);
+        v1.extend_from_slice(&v2[52..]);
         v1[4..8].copy_from_slice(&1_u32.to_le_bytes());
         let restored = SingleplayerSave::decode(&v1).unwrap();
         assert_eq!(restored.seed, 99);
