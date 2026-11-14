@@ -32,7 +32,7 @@ function publishSectionDeltas(requestId = undefined) {
     if (!current.has(key)) removed.push(...key.split(",").map(Number));
   }
   knownSections = current;
-  if (updates.length || removed.length) send("section-deltas", { requestId, updates, removed });
+  if (updates.length || removed.length) send("section-deltas", { requestId, updates, removed: Int32Array.from(removed) });
 }
 
 function send(type, payload = {}, transfer = []) {
