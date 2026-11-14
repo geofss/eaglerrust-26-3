@@ -90,6 +90,8 @@ impl ProtocolSession {
                 0x02 => {
                     self.state = ProtocolState::Configuration;
                     events.push(ProtocolEvent::LoginSuccess(payload.to_vec()));
+                    events.push(ProtocolEvent::Send(client_information_packet()));
+                    events.push(ProtocolEvent::Send(brand_plugin_message()));
                 }
                 0x04 => {
                     let (message_id, id_bytes) = read_varint(payload)?;
@@ -272,10 +274,9 @@ impl EaglerV5Session {
                     events.push(ProtocolEvent::ServerDisconnect(payload.to_vec()));
                 }
                 0x03 => {
-                    self.state = ProtocolState::Play;
-                    events.push(ProtocolEvent::Send(client_information_packet()));
-                    events.push(ProtocolEvent::Send(brand_plugin_message()));
+                    // The client settings and brand were sent on entry to Configuration.
                     events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
+                    self.state = ProtocolState::Play;
                     events.push(ProtocolEvent::ConfigurationFinished);
                 }
                 0x04 => {
@@ -785,7 +786,11 @@ mod tests {
         let mut s = ProtocolSession::new();
         s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
         assert_eq!(s.process_server_message(&encode_ws_packet(2, &[9, 8])),
-            Ok(vec![ProtocolEvent::LoginSuccess(vec![9, 8])]));
+            Ok(vec![
+                ProtocolEvent::LoginSuccess(vec![9, 8]),
+                ProtocolEvent::Send(client_information_packet()),
+                ProtocolEvent::Send(brand_plugin_message()),
+            ]));
         assert_eq!(s.state(), ProtocolState::Configuration);
         // Java 777: Select Known Packs is clientbound 0x0f;
         // the empty response is serverbound 0x07.
