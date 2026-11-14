@@ -24,4 +24,5 @@ jobs:
       - name: Verify external DNS, TLS, WebSocket, and Eagler V5 login
         env:
           EAGLER_WS_URL: wss://8b4t.org
+          EAGLER_MC_PROTOCOL: "774"
         run: node tools/probe_8b4t_v5.mjs
