@@ -13,6 +13,7 @@ const TICK_INTERVAL_MS = 50;
 const VIEW_DISTANCE = 1;
 let initialized = false;
 let paused = false;
+let hasPlayerState = false;
 let timer = null;
 let player = { x: 0.5, y: 80, z: 0.5, yaw: 0, pitch: 0, onGround: false };
 
@@ -50,7 +51,7 @@ async function initialize(message) {
 }
 
 function runTick() {
-  if (!initialized || paused) return;
+  if (!initialized || paused || !hasPlayerState) return;
   try {
     const result = worker_server_tick(
       player.x, player.y, player.z, player.yaw, player.pitch, player.onGround,
@@ -104,6 +105,7 @@ self.addEventListener("message", async (event) => {
           pitch: message.player.pitch,
           onGround: Boolean(message.player.onGround),
         };
+        hasPlayerState = true;
         break;
       case "block-edit": {
         if (!initialized) throw new Error("Worker server is not initialized");
