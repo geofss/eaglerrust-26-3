@@ -532,8 +532,9 @@ mod tests {
         section.set(LocalBlockPosition { x: 7, y: 5, z: 9 }, BlockStateId(42));
         world.replace_section(position, section);
         let states = world.section_states(position).unwrap();
+        let local = LocalBlockPosition { x: 7, y: 5, z: 9 };
         assert_eq!(states.len(), SECTION_VOLUME);
-        assert_eq!(states[LocalBlockPosition { x: 7, y: 5, z: 9 }.index()], BlockStateId(42));
+        assert_eq!(states[local.index()], BlockStateId(42));
     }
 
     #[test]
