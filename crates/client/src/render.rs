@@ -357,8 +357,11 @@ pub fn load_singleplayer_world(bytes: &[u8]) -> Result<(), JsValue> {
             return Err(JsValue::from_str("Disconnect from the server before loading a local save"));
         }
         let server = IntegratedServer::from_save(save, renderer.chunk_manager.radius());
-        let world = server.world().clone();
+        let mut world = server.world().clone();
         let meshes = build_section_gpu_meshes(&renderer.gl, &world, renderer.atlas_layout)?;
+        // The freshly built GPU meshes already reflect every loaded section.
+        // Clear decode-time dirtiness so the first small delta doesn't rebuild the whole world.
+        world.take_dirty_sections();
         for (_, mesh) in renderer.section_meshes.drain() {
             renderer.gl.delete_buffer(Some(&mesh.buffer));
         }
