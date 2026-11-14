@@ -384,8 +384,11 @@
       load_singleplayer_world,
       set_singleplayer_game_mode,
       singleplayer_game_mode,
-      take_singleplayer_autosave_request,
       set_singleplayer_paused,
+      apply_singleplayer_worker_snapshot,
+      set_singleplayer_worker_active,
+      singleplayer_worker_player_state,
+      take_singleplayer_worker_edits,
       resize_renderer,
       draw_frame,
       set_key,
@@ -460,36 +463,163 @@
         for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
         return bytes;
       };
+
+      // Typed IPC boundary: the worker owns simulation; this thread owns rendering/input.
+      let singleplayerWorker = null;
+      let workerReady = false;
+      let workerRequestId = 0;
+      const workerRequests = new Map();
+      const nextWorkerRequest = () => ++workerRequestId;
+      const postWorker = (message, transfer = []) => {
+        if (!singleplayerWorker) throw new Error("Singleplayer worker is not running");
+        singleplayerWorker.postMessage(message, transfer);
+      };
+      const startSingleplayerWorker = (saveBytes) => new Promise((resolve, reject) => {
+        if (singleplayerWorker) singleplayerWorker.terminate();
+        workerReady = false;
+        set_singleplayer_worker_active(false);
+        singleplayerWorker = new Worker(new URL("./singleplayer-worker.js", import.meta.url), { type: "module" });
+        const requestId = nextWorkerRequest();
+        workerRequests.set(requestId, { resolve, reject, kind: "init" });
+        singleplayerWorker.addEventListener("message", (event) => {
+          const message = event.data || {};
+          const pending = workerRequests.get(message.requestId);
+          if (message.type === "error") {
+            if (pending) {
+              workerRequests.delete(message.requestId);
+              pending.reject(new Error(message.message || "Worker operation failed"));
+            }
+            singleplayerStatus.textContent = "Worker error: " + message.message;
+            return;
+          }
+          if (message.type === "ready") {
+            try {
+              apply_singleplayer_worker_snapshot(message.snapshot);
+              set_singleplayer_worker_active(true);
+              workerReady = true;
+              document.getElementById("singleplayer-mode").value = String(singleplayer_game_mode());
+              singleplayerStatus.textContent = "Dedicated Rust/WASM server worker ready";
+              if (pending) {
+                workerRequests.delete(message.requestId);
+                pending.resolve();
+              }
+            } catch (error) {
+              if (pending) {
+                workerRequests.delete(message.requestId);
+                pending.reject(error);
+              }
+            }
+            return;
+          }
+          if (message.type === "world-snapshot" || message.type === "edit-result") {
+            if (message.snapshot) {
+              try {
+                apply_singleplayer_worker_snapshot(message.snapshot);
+                if (message.autosaveDue) {
+                  localStorage.setItem(saveKey, bytesToBase64(message.snapshot));
+                  singleplayerStatus.textContent = "Worker autosaved · " + message.snapshot.byteLength.toLocaleString() + " bytes";
+                }
+              } catch (error) {
+                singleplayerStatus.textContent = "World sync failed: " + error;
+              }
+            }
+            if (pending) {
+              workerRequests.delete(message.requestId);
+              pending.resolve(message.snapshot || null);
+            }
+            return;
+          }
+          if (message.type === "save-result") {
+            const bytes = new Uint8Array(message.snapshot);
+            try {
+              localStorage.setItem(saveKey, bytesToBase64(bytes));
+              singleplayerStatus.textContent = "Saved by worker · " + bytes.length.toLocaleString() + " bytes";
+              if (pending) {
+                workerRequests.delete(message.requestId);
+                pending.resolve(bytes);
+              }
+            } catch (error) {
+              if (pending) {
+                workerRequests.delete(message.requestId);
+                pending.reject(error);
+              }
+            }
+            return;
+          }
+          if (message.type === "game-mode-result" || message.type === "pause-result") {
+            if (pending) {
+              workerRequests.delete(message.requestId);
+              pending.resolve(message);
+            }
+          }
+        });
+        singleplayerWorker.addEventListener("error", (event) => {
+          const error = new Error(event.message || "Singleplayer worker failed to load");
+          for (const pending of workerRequests.values()) pending.reject(error);
+          workerRequests.clear();
+          workerReady = false;
+          set_singleplayer_worker_active(false);
+          singleplayerStatus.textContent = "Worker startup failed: " + error.message;
+        });
+        const payload = saveBytes.slice();
+        singleplayerWorker.postMessage({ type: "init", requestId, save: payload }, [payload.buffer]);
+      });
+      const requestWorkerSave = () => new Promise((resolve, reject) => {
+        if (!workerReady) {
+          try {
+            const bytes = save_singleplayer_world();
+            localStorage.setItem(saveKey, bytesToBase64(bytes));
+            resolve(bytes);
+          } catch (error) { reject(error); }
+          return;
+        }
+        const requestId = nextWorkerRequest();
+        workerRequests.set(requestId, { resolve, reject, kind: "save" });
+        postWorker({ type: "save", requestId });
+      });
+      const sendWorkerGameMode = (mode) => {
+        if (!workerReady) return;
+        const requestId = nextWorkerRequest();
+        workerRequests.set(requestId, { resolve: () => {}, reject: () => {}, kind: "game-mode" });
+        postWorker({ type: "game-mode", requestId, mode });
+      };
+      startSingleplayerWorker(save_singleplayer_world()).catch((error) => {
+        singleplayerStatus.textContent = "Worker startup failed: " + error;
+      });
       document.getElementById("singleplayer-mode").addEventListener("change", () => {
         try {
-          set_singleplayer_game_mode(Number(document.getElementById("singleplayer-mode").value));
-          singleplayerStatus.textContent = "Local game mode updated";
+          const mode = Number(document.getElementById("singleplayer-mode").value);
+          set_singleplayer_game_mode(mode);
+          sendWorkerGameMode(mode);
+          singleplayerStatus.textContent = "Worker-owned game mode updated";
         } catch (error) {
           singleplayerStatus.textContent = `Game mode change failed: ${error}`;
         }
       });
-      document.getElementById("new-world").addEventListener("click", () => {
+      document.getElementById("new-world").addEventListener("click", async () => {
         try {
           const seed = Number(seedInput.value);
           if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
             throw new Error("Seed must be an integer from 0 to 4294967295");
           }
           create_singleplayer_world(seed);
-          set_singleplayer_game_mode(Number(document.getElementById("singleplayer-mode").value));
-          singleplayerStatus.textContent = `New local world created · seed ${seed}`;
-          status.textContent = "Singleplayer world generated · local simulation active";
+          const mode = Number(document.getElementById("singleplayer-mode").value);
+          set_singleplayer_game_mode(mode);
+          await startSingleplayerWorker(save_singleplayer_world());
+          sendWorkerGameMode(mode);
+          singleplayerStatus.textContent = "Worker world created · seed " + seed;
+          status.textContent = "Singleplayer world running in dedicated Rust/WASM worker";
         } catch (error) {
-          singleplayerStatus.textContent = `Create failed: ${error}`;
+          singleplayerStatus.textContent = "Create failed: " + error;
         }
       });
-      document.getElementById("save-world").addEventListener("click", () => {
+      document.getElementById("save-world").addEventListener("click", async () => {
         try {
-          const bytes = save_singleplayer_world();
-          localStorage.setItem(saveKey, bytesToBase64(bytes));
-          singleplayerStatus.textContent = `Saved locally · ${bytes.length.toLocaleString()} bytes`;
-          status.textContent = "Singleplayer world saved in this browser";
+          const bytes = await requestWorkerSave();
+          singleplayerStatus.textContent = "Saved locally · " + bytes.length.toLocaleString() + " bytes";
+          status.textContent = "Worker-owned singleplayer world saved in this browser";
         } catch (error) {
-          singleplayerStatus.textContent = `Save failed: ${error}`;
+          singleplayerStatus.textContent = "Save failed: " + error;
         }
       });
       // Flush the most recent server snapshot when the page is backgrounded or closed.
@@ -501,18 +631,19 @@
           // The page may be closing during multiplayer or before renderer startup.
         }
       });
-      document.getElementById("load-world").addEventListener("click", () => {
+      document.getElementById("load-world").addEventListener("click", async () => {
         try {
           const encoded = localStorage.getItem(saveKey);
           if (!encoded) throw new Error("No local save found in this browser");
           const bytes = base64ToBytes(encoded);
           load_singleplayer_world(bytes);
+          await startSingleplayerWorker(bytes);
           document.getElementById("singleplayer-mode").value = String(singleplayer_game_mode());
-          singleplayerStatus.textContent = `Loaded local save · ${bytes.length.toLocaleString()} bytes`;
-          status.textContent = "Singleplayer save restored · world and player location loaded";
+          singleplayerStatus.textContent = "Worker restored save · " + bytes.length.toLocaleString() + " bytes";
+          status.textContent = "Singleplayer save restored into the dedicated worker";
           refreshHotbar();
         } catch (error) {
-          singleplayerStatus.textContent = `Load failed: ${error}`;
+          singleplayerStatus.textContent = "Load failed: " + error;
         }
       });
 
@@ -636,6 +767,10 @@
       });
       document.addEventListener("visibilitychange", () => {
         set_singleplayer_paused(document.hidden);
+        if (workerReady) {
+          const requestId = nextWorkerRequest();
+          postWorker({ type: "pause", requestId, paused: document.hidden });
+        }
       });
 
       window.addEventListener("blur", () => {
@@ -730,16 +865,24 @@
           disconnectButton.disabled = true;
         }
         draw_frame();
-        if (take_singleplayer_autosave_request()) {
-          try {
-            const bytes = save_singleplayer_world();
-            localStorage.setItem(saveKey, bytesToBase64(bytes));
-            singleplayerStatus.textContent = `Autosaved locally · ${bytes.length.toLocaleString()} bytes`;
-          } catch (error) {
-            singleplayerStatus.textContent = `Autosave failed: ${error}`;
+        statusFrame++;
+        if (workerReady && statusFrame % 3 === 0) {
+          const state = singleplayer_worker_player_state();
+          if (state.length >= 6) {
+            postWorker({ type: "player-state", player: {
+              x: state[0], y: state[1], z: state[2],
+              yaw: state[3], pitch: state[4], onGround: state[5] !== 0,
+            }});
+          }
+          const edits = take_singleplayer_worker_edits();
+          for (let index = 0; index + 3 < edits.length; index += 4) {
+            const [x, y, z, blockState] = edits.slice(index, index + 4);
+            postWorker(blockState === 0
+              ? { type: "block-break", x, y, z }
+              : { type: "block-edit", x, y, z, state: blockState });
           }
         }
-        if (++statusFrame % 30 === 0) {
+        if (statusFrame % 30 === 0) {
           const target = target_block_state();
           const progress = mining_progress();
           if (target) status.textContent = progress > 0
