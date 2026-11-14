@@ -107,9 +107,9 @@ ws.addEventListener("message", (event) => {
         0,                        // enableCookies = false
         0,                        // cookie length
         ...varInt(standardCaps),  // standard capability bitmask
-        ...varInt(0),             // REDIRECT version bitset
-        ...varInt(0),             // NOTIFICATION version bitset
-        ...varInt(0),             // PAUSE_MENU version bitset
+        ...varInt(1),             // REDIRECT supports version 0 (bit 0)
+        ...varInt(1),             // NOTIFICATION supports version 0 (bit 0)
+        ...varInt(1),             // PAUSE_MENU supports version 0 (bit 0)
         0                         // zero extended capabilities
       ], "EAGLER V5 CLIENT_REQUEST_LOGIN (source-matched V5 layout)");
       return;
