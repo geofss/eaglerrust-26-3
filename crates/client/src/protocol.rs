@@ -249,9 +249,13 @@ impl EaglerV5Session {
             return self.process_eagler_login_message(message);
         }
 
-        // Eagler extension messages (skins, voice, cookies) use 0xEE and are
-        // intentionally ignored until their independent codecs are implemented.
-        if self.state == ProtocolState::Play && message.first() == Some(&0xEE) {
+        // EaglerXServer injects V5 extension frames with a leading 0xEE
+        // outside the vanilla Java packet stream. They can arrive immediately
+        // after login (while still in Configuration), not only during Play.
+        // Keep them out of the Java VarInt packet decoder until their codecs exist.
+        if matches!(self.state, ProtocolState::Configuration | ProtocolState::Play)
+            && message.first() == Some(&0xEE)
+        {
             return Ok(Vec::new());
         }
 
@@ -794,6 +798,30 @@ mod tests {
                 ProtocolEvent::ConfigurationFinished,
             ]));
         assert_eq!(s.state(), ProtocolState::Play);
+    }
+
+    #[test]
+    fn eagler_v5_extension_frames_are_not_misclassified_as_java_configuration() {
+        let mut session = EaglerV5Session::new();
+        session.begin_login("proxy.example", 25565, "RustPlayer", [9; 16]).unwrap();
+        session.process_server_message(&eagler_server_version()).unwrap();
+        let mut allow = vec![0x05, 10];
+        allow.extend_from_slice(b"RustPlayer");
+        allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]);
+        session.process_server_message(&allow).unwrap();
+        session.process_server_message(&[0x09]).unwrap();
+
+        // EaglerXServer's injected V5 state-flag frame: 0xEE, sub-ID 0x21,
+        // UUID (16 bytes), then a VarInt state value.
+        let mut extension = vec![0xEE, 0x21];
+        extension.extend_from_slice(&[
+            0x55, 0xF6, 0x36, 0x01, 0x69, 0x41, 0x40, 0xD9,
+            0xB7, 0x7B, 0xCE, 0x7B, 0x99, 0xA6, 0x2E, 0x52,
+            0x01,
+        ]);
+        assert_eq!(session.process_server_message(&extension).unwrap(), Vec::<ProtocolEvent>::new());
+        assert_eq!(session.state(), ProtocolState::Configuration);
     }
 
     #[test]
