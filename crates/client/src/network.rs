@@ -153,11 +153,15 @@ mod browser {
 
     fn log_protocol_message(direction: &str, state: crate::protocol::ProtocolState, bytes: &[u8]) {
         let detail = if state == crate::protocol::ProtocolState::Login {
-            bytes.first().map(|id| format!("Eagler packet 0x{id:02X}"))
-                .unwrap_or_else(|| "empty Eagler packet".to_owned())
+            bytes.first().map(|id| format!("Eagler login packet 0x{id:02X}"))
+                .unwrap_or_else(|| "empty Eagler login packet".to_owned())
+        } else if bytes.first() == Some(&0xEE) {
+            bytes.get(1)
+                .map(|id| format!("Eagler V5 extension frame id=0x{id:02X}"))
+                .unwrap_or_else(|| "truncated Eagler V5 extension frame".to_owned())
         } else {
             crate::protocol::decode_ws_packet(bytes)
-                .map(|(id, payload)| format!("Minecraft packet id={id} payload={}B", payload.len()))
+                .map(|(id, payload)| format!("Java packet id=0x{id:X} payload={}B", payload.len()))
                 .unwrap_or_else(|error| format!("unparsed packet ({error:?})"))
         };
         web_sys::console::log_1(&JsValue::from_str(&format!(
