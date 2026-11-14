@@ -67,13 +67,13 @@ impl MockReferenceServer {
 
     fn known_packs(&self) -> Vec<u8> {
         assert_eq!(self.state, MockServerState::Configuration);
-        encode_ws_packet(0x08, &[0x00])
+        encode_ws_packet(0x0f, &[0x00])
     }
 
     fn finish_configuration(&mut self) -> Vec<u8> {
         assert_eq!(self.state, MockServerState::Configuration);
         self.state = MockServerState::Play;
-        encode_ws_packet(0x02, &[])
+        encode_ws_packet(0x03, &[])
     }
 
     fn keep_alive(&self, value: i64) -> Vec<u8> {
@@ -135,14 +135,14 @@ fn scripted_server_drives_client_from_handshake_to_play() {
     let events = client.process_server_message(&server.known_packs()).unwrap();
     let responses = sent_packets(events);
     assert_eq!(responses.len(), 1);
-    assert_eq!(decode_ws_packet(&responses[0]).unwrap(), (0x05, &[0x00][..]));
+    assert_eq!(decode_ws_packet(&responses[0]).unwrap(), (0x07, &[0x00][..]));
 
     let events = client.process_server_message(&server.finish_configuration()).unwrap();
     let responses = sent_packets(events);
     assert_eq!(responses.len(), 3);
     assert_eq!(decode_ws_packet(&responses[0]).unwrap().0, 0x00); // client information
-    assert_eq!(decode_ws_packet(&responses[1]).unwrap().0, 0x01); // brand
-    assert_eq!(decode_ws_packet(&responses[2]).unwrap(), (0x02, &[][..]));
+    assert_eq!(decode_ws_packet(&responses[1]).unwrap().0, 0x02); // brand
+    assert_eq!(decode_ws_packet(&responses[2]).unwrap(), (0x03, &[][..]));
     assert_eq!(client.state(), ProtocolState::Play);
     assert_eq!(server.state, MockServerState::Play);
 
