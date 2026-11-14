@@ -224,6 +224,20 @@ impl World {
         dirty
     }
 
+    /// Drain dirty sections into compact worker IPC records: x/y/z then 4096 state IDs.
+    /// Missing sections are omitted; their unload coordinates are tracked separately.
+    pub fn take_dirty_section_records(&mut self) -> Vec<i32> {
+        let dirty = self.take_dirty_sections();
+        let mut records = Vec::with_capacity(dirty.len() * (3 + SECTION_VOLUME));
+        for position in dirty {
+            if let Some(section) = self.sections.get(&position) {
+                records.extend_from_slice(&[position.x, position.y, position.z]);
+                records.extend(section.as_slice().iter().map(|state| state.0 as i32));
+            }
+        }
+        records
+    }
+
     /// Ensure an empty section exists (used when restoring sparse snapshots).
     pub fn ensure_section(&mut self, position: SectionPosition) {
         self.sections.entry(position).or_default();
@@ -492,6 +506,22 @@ mod tests {
         assert!(!world.is_section_loaded(SectionPosition::new(0, 1, 0)));
         assert!(world.is_section_loaded(SectionPosition::new(1, 0, 0)));
         assert_eq!(world.take_dirty_sections(), vec![SectionPosition::new(1, 0, 0)]);
+    }
+
+    #[test]
+    fn dirty_section_records_include_coordinates_and_all_state_ids() {
+        let mut world = World::new();
+        let position = SectionPosition::new(-2, 3, 4);
+        let mut section = ChunkSection::new();
+        let local = LocalBlockPosition { x: 7, y: 5, z: 9 };
+        section.set(local, BlockStateId(42));
+        world.replace_section(position, section);
+
+        let records = world.take_dirty_section_records();
+        assert_eq!(records.len(), 3 + SECTION_VOLUME);
+        assert_eq!(&records[..3], &[-2, 3, 4]);
+        assert_eq!(records[3 + local.index()], 42);
+        assert!(world.take_dirty_section_records().is_empty());
     }
 
     #[test]
