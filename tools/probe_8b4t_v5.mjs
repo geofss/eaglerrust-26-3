@@ -2,12 +2,14 @@
 // External Eagler V5 smoke probe. Runs on a GitHub-hosted runner, not the build sandbox.
 const endpoint = process.env.EAGLER_WS_URL || "wss://8b4t.org";
 const username = "RustProbe";
+const minecraftProtocol = Number(process.env.EAGLER_MC_PROTOCOL || "774");
+if (![774, 777].includes(minecraftProtocol)) throw new Error(`unsupported EAGLER_MC_PROTOCOL: ${minecraftProtocol}`);
 const timeoutMs = 25000;
 
 const u16 = (n) => [n >> 8 & 255, n & 255];
 const ascii = (s) => [Buffer.byteLength(s), ...Buffer.from(s, "ascii")];
 const frame = [
-  0x01, 0x02, ...u16(3), ...u16(3), ...u16(4), ...u16(5), ...u16(1), ...u16(777),
+  0x01, 0x02, ...u16(3), ...u16(3), ...u16(4), ...u16(5), ...u16(1), ...u16(minecraftProtocol),
   ...ascii("EaglerRust"), ...ascii("26.3"), 0, ...ascii(username)
 ];
 
@@ -73,7 +75,7 @@ function fail(error) {
 ws.addEventListener("open", () => {
   console.log(`OPEN endpoint=${endpoint} protocol='${ws.protocol}' extensions='${ws.extensions}'`);
   stage = "server-version";
-  send(ws, frame, "Eagler V5 CLIENT_VERSION (protocol 5 / Java 777)");
+  send(ws, frame, `Eagler V5 CLIENT_VERSION (protocol 5 / Java ${minecraftProtocol})`);
 });
 ws.addEventListener("message", (event) => {
   try {
@@ -96,7 +98,7 @@ ws.addEventListener("message", (event) => {
       const nicknameSelection = data[p++] !== 0;
       if (p !== data.length) throw new Error(`unexpected SERVER_VERSION trailing bytes: ${data.length - p}`);
       console.log(`SERVER_VERSION eagler=${eagler} java=${java} brand='${brand}' version='${version}' auth=${auth} saltBytes=${saltLen} nicknameSelection=${nicknameSelection}`);
-      if (eagler !== 5 || java !== 777) throw new Error(`incompatible protocol: expected Eagler 5 / Java 777, got ${eagler} / ${java}`);
+      if (eagler !== 5 || java !== minecraftProtocol) throw new Error(`incompatible protocol: requested Eagler 5 / Java ${minecraftProtocol}, server selected Eagler ${eagler} / Java ${java}`);
       stage = "backend-allow-login";
       const standardCaps = (1 << 2) | (1 << 3) | (1 << 4); // REDIRECT, NOTIFICATION, PAUSE_MENU
       send(ws, [
