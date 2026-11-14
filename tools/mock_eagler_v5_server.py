@@ -149,20 +149,22 @@ async def handler(ws):
             raise ValueError("Login Acknowledged should have an empty payload")
         print("[mock] Login -> Configuration confirmed")
 
-        # Unknown config packet proves the client preserves modern sync packets
-        # for diagnostics rather than terminating the connection.
+        # Protocol 777 Known Packs is clientbound 0x0f; the client replies
+        # with Select Known Packs (serverbound 0x07), then we send an opaque
+        # registry-like message and Finish Configuration (0x03).
+        await ws.send(encode_varint(0x0F) + b"\x00")
         await ws.send(encode_varint(0x7F) + b"mock-registry-sync")
-        await ws.send(encode_varint(0x02))
-        print("[mock] TX unknown config packet 0x7f, then Finish Configuration 0x02")
+        await ws.send(encode_varint(0x03))
+        print("[mock] TX Known Packs 0x0f, unknown config 0x7f, Finish Configuration 0x03")
 
         seen = set()
-        for _ in range(3):
+        for _ in range(4):
             message = await receive_binary(ws, "Configuration response")
             packet_id, used = varint(message)
             seen.add(packet_id)
-        if seen != {0x00, 0x01, 0x02}:
+        if seen != {0x00, 0x02, 0x03, 0x07}:
             raise ValueError(f"unexpected config responses: {sorted(seen)}")
-        print("[mock] Configuration -> Play confirmed (client info, brand, finish ack)")
+        print("[mock] Configuration -> Play confirmed (client info, brand, known packs, finish ack)")
 
         keepalive_payload = struct.pack(">q", 123456789)
         await ws.send(encode_varint(0x2C) + keepalive_payload)
