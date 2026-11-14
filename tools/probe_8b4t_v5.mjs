@@ -186,9 +186,23 @@ ws.addEventListener("message", (event) => {
       return;
     }
     if (stage === "configuration") {
-      const [javaPacketId] = readVarInt(data, 0);
-      console.log("CONFIGURATION_TRAFFIC observed (first Java packet id 0x" + javaPacketId.toString(16) + ").");
-      finish("PASS: Eagler V5 login, profile-data, finish-login, and first Java configuration packet received.");
+      // EaglerXServer injects V5 extension frames with 0xEE before/alongside
+      // vanilla Java packets. They are not Java VarInt packet IDs.
+      if (id === 0xee) {
+        const extensionId = data.length > 1 ? data[1] : -1;
+        if (extensionId === 0x21 && data.length >= 19) {
+          const uuid = data.subarray(2, 18).toString("hex");
+          const [flagState, end] = readVarInt(data, 18);
+          console.log(`EAGLER_EXTENSION id=0x21 ClientStateFlag uuid=${uuid} state=${flagState} trailingBytes=${data.length - end}`);
+        } else {
+          console.log(`EAGLER_EXTENSION id=0x${extensionId < 0 ? "??" : extensionId.toString(16)} bytes=${data.length} hex=${data.toString("hex")}`);
+        }
+        return;
+      }
+      const [javaPacketId, packetIdBytes] = readVarInt(data, 0);
+      const payload = data.subarray(packetIdBytes);
+      console.log(`JAVA_CONFIGURATION_PACKET id=0x${javaPacketId.toString(16)} payloadBytes=${payload.length} payloadHex=${payload.toString("hex")}`);
+      finish("PASS: Eagler V5 login, profile-data, finish-login, Eagler extensions filtered, and first vanilla Java configuration packet received.");
     }
   } catch (error) { fail(error); }
 });
