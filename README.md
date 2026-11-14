@@ -99,3 +99,28 @@ The V5 login path currently offers no password, cookies, skin/cape profile data,
 capabilities. Configuration/play packet identifiers and gameplay packet coverage still need
 independent 26.3 verification, and a real EaglerXServer join test is still required. A green
 unit/wasm build does not establish end-to-end server compatibility.
+
+
+## Local Eagler V5 transport smoke test
+
+A deterministic WebSocket fixture is included for testing the browser transport without a
+public server. It exercises the V5 client-version preamble, protocol 5 / Java protocol 777
+negotiation, no-password login, Login Acknowledged, Configuration, an unknown configuration
+packet, the transition to Play, and a keepalive response.
+
+This fixture is **not** EaglerXServer and does not emulate a real Minecraft backend or world.
+It verifies the client's transport/state-machine exchange only.
+
+```sh
+python -m pip install -r tools/requirements-test.txt
+python tools/mock_eagler_v5_server.py
+```
+
+Then serve the project page locally and connect to `ws://127.0.0.1:8765`. The page permits
+unencrypted `ws://` only for loopback hosts; non-local endpoints are upgraded to `wss://`.
+Open the browser developer console to inspect `onopen`, `onerror`, `onclose`, V5 preamble,
+packet IDs, VarInts, and state transitions. The mock prints each exchange on the server side.
+
+The current test fixture does not validate real 26.3 registry/data-component packet schemas.
+Those remain opaque diagnostic packets until their exact protocol-777 layouts are independently
+verified against a real 26.3-compatible Eagler endpoint.
