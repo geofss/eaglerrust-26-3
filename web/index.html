@@ -458,6 +458,14 @@
         for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
         return bytes;
       };
+      document.getElementById("singleplayer-mode").addEventListener("change", () => {
+        try {
+          set_singleplayer_game_mode(Number(document.getElementById("singleplayer-mode").value));
+          singleplayerStatus.textContent = "Local game mode updated";
+        } catch (error) {
+          singleplayerStatus.textContent = `Game mode change failed: ${error}`;
+        }
+      });
       document.getElementById("new-world").addEventListener("click", () => {
         try {
           const seed = Number(seedInput.value);
