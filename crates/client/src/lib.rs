@@ -330,6 +330,25 @@ pub fn disconnect_reference_server() {
     render::disconnect_reference_world();
 }
 
+/// Select the active local singleplayer game mode (0 survival, 1 creative, 2 adventure, 3 spectator).
+#[wasm_bindgen]
+pub fn set_singleplayer_game_mode(mode: u8) -> Result<(), JsValue> {
+    let mode = match mode {
+        0 => integrated_server::GameMode::Survival,
+        1 => integrated_server::GameMode::Creative,
+        2 => integrated_server::GameMode::Adventure,
+        3 => integrated_server::GameMode::Spectator,
+        _ => return Err(JsValue::from_str("Game mode must be 0, 1, 2, or 3")),
+    };
+    render::set_singleplayer_game_mode(mode)
+}
+
+/// Return and clear the local server's 30-second autosave request.
+#[wasm_bindgen]
+pub fn take_singleplayer_autosave_request() -> bool {
+    render::take_singleplayer_autosave_request()
+}
+
 /// Create a new local singleplayer world from a numeric seed.
 #[wasm_bindgen]
 pub fn create_singleplayer_world(seed: u32) -> Result<(), JsValue> {
