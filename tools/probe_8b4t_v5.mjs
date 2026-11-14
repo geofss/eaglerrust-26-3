@@ -76,11 +76,13 @@ ws.addEventListener("message", (event) => {
       console.log(`SERVER_VERSION eagler=${eagler} java=${java} brand='${brand}' version='${version}' auth=${auth} saltBytes=${saltLen}`);
       if (eagler !== 5 || java !== 777) throw new Error(`incompatible protocol: expected Eagler 5 / Java 777, got ${eagler} / ${java}`);
       stage = "allow-login";
-      send(ws, [0x04, ...ascii(username), ...ascii(""), 0, 0, 0, 0, 0], "CLIENT_REQUEST_LOGIN");
+      send(ws, [0x04, ...ascii(username), ...ascii(""), ...ascii("")], "EAGLERCRAFT CLIENT_REQUEST_LOGIN (username, requested server, auth password)");
       return;
     }
     if (stage === "allow-login") {
-      if (id !== 0x05) throw new Error(`expected ALLOW_LOGIN 0x05, got 0x${id.toString(16)}`);
+      if (id === 0xff) throw new Error(`Eagler server error packet: ${data.toString("hex")}`);
+      if (id === 0x06) throw new Error(`Eagler login denied: ${data.subarray(2).toString("utf8")}`);
+      if (id !== 0x05) throw new Error(`expected Eagler SERVER_ALLOW_LOGIN 0x05, got 0x${id.toString(16)}`);
       let p = 1, name;
       [name, p] = readAscii(data, p);
       if (p + 16 > data.length) throw new Error("ALLOW_LOGIN missing UUID");
@@ -95,7 +97,8 @@ ws.addEventListener("message", (event) => {
       console.log("SERVER_FINISH_LOGIN accepted; Eagler V5 login completed.");
       stage = "configuration";
       // Vanilla Login Acknowledged (packet id 0x03, VarInt) releases backend configuration.
-      send(ws, [0x03], "LOGIN_ACKNOWLEDGED");
+      finish("PASS: DNS/TLS/WebSocket + Eagler V5 protocol 5 / Java 777 + Eaglercraft login request accepted + server finish login received.");
+      return;
       return;
     }
     if (stage === "configuration") {
