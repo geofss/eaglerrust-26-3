@@ -385,6 +385,7 @@
       set_singleplayer_game_mode,
       singleplayer_game_mode,
       take_singleplayer_autosave_request,
+      set_singleplayer_paused,
       resize_renderer,
       draw_frame,
       set_key,
@@ -633,6 +634,10 @@
           set_key(key, false);
         }
       });
+      document.addEventListener("visibilitychange", () => {
+        set_singleplayer_paused(document.hidden);
+      });
+
       window.addEventListener("blur", () => {
         set_breaking(false);
         for (const key of movementKeys) set_key(key, false);
