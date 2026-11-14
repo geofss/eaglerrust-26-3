@@ -333,10 +333,18 @@
 
     <section class="singleplayer-panel" aria-label="Singleplayer worlds">
       <h2>Singleplayer world</h2>
-      <p>Local procedural world simulation with seed-based generation. Save/load stores your current blocks and player location in this browser's local storage. This is an in-progress Rust game prototype, not full Minecraft parity.</p>
+      <p>Local Rust integrated-server simulation at 20 ticks per second. Worlds save in this browser and autosave every 30 seconds. This is an in-progress port, not full Minecraft parity.</p>
       <div class="singleplayer-actions">
         <label>World seed
           <input id="world-seed" type="number" min="0" max="4294967295" step="1" value="3932233766" inputmode="numeric">
+        </label>
+        <label>Game mode
+          <select id="singleplayer-mode">
+            <option value="1" selected>Creative</option>
+            <option value="0">Survival</option>
+            <option value="2">Adventure</option>
+            <option value="3">Spectator</option>
+          </select>
         </label>
         <button id="new-world" type="button">Create World</button>
         <button id="save-world" type="button">Save World</button>
@@ -374,6 +382,8 @@
       create_singleplayer_world,
       save_singleplayer_world,
       load_singleplayer_world,
+      set_singleplayer_game_mode,
+      take_singleplayer_autosave_request,
       resize_renderer,
       draw_frame,
       set_key,
@@ -455,6 +465,7 @@
             throw new Error("Seed must be an integer from 0 to 4294967295");
           }
           create_singleplayer_world(seed);
+          set_singleplayer_game_mode(Number(document.getElementById("singleplayer-mode").value));
           singleplayerStatus.textContent = `New local world created · seed ${seed}`;
           status.textContent = "Singleplayer world generated · local simulation active";
         } catch (error) {
@@ -477,6 +488,7 @@
           if (!encoded) throw new Error("No local save found in this browser");
           const bytes = base64ToBytes(encoded);
           load_singleplayer_world(bytes);
+          set_singleplayer_game_mode(Number(document.getElementById("singleplayer-mode").value));
           singleplayerStatus.textContent = `Loaded local save · ${bytes.length.toLocaleString()} bytes`;
           status.textContent = "Singleplayer save restored · world and player location loaded";
           refreshHotbar();
@@ -695,6 +707,15 @@
           disconnectButton.disabled = true;
         }
         draw_frame();
+        if (take_singleplayer_autosave_request()) {
+          try {
+            const bytes = save_singleplayer_world();
+            localStorage.setItem(saveKey, bytesToBase64(bytes));
+            singleplayerStatus.textContent = `Autosaved locally · ${bytes.length.toLocaleString()} bytes`;
+          } catch (error) {
+            singleplayerStatus.textContent = `Autosave failed: ${error}`;
+          }
+        }
         if (++statusFrame % 30 === 0) {
           const target = target_block_state();
           const progress = mining_progress();
