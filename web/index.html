@@ -383,6 +383,7 @@
       save_singleplayer_world,
       load_singleplayer_world,
       set_singleplayer_game_mode,
+      singleplayer_game_mode,
       take_singleplayer_autosave_request,
       resize_renderer,
       draw_frame,
@@ -496,7 +497,7 @@
           if (!encoded) throw new Error("No local save found in this browser");
           const bytes = base64ToBytes(encoded);
           load_singleplayer_world(bytes);
-          set_singleplayer_game_mode(Number(document.getElementById("singleplayer-mode").value));
+          document.getElementById("singleplayer-mode").value = String(singleplayer_game_mode());
           singleplayerStatus.textContent = `Loaded local save · ${bytes.length.toLocaleString()} bytes`;
           status.textContent = "Singleplayer save restored · world and player location loaded";
           refreshHotbar();
