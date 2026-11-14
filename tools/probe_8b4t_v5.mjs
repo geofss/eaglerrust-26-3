@@ -3,7 +3,7 @@
 const endpoint = process.env.EAGLER_WS_URL || "wss://8b4t.org";
 const username = "RustProbe";
 const minecraftProtocol = Number(process.env.EAGLER_MC_PROTOCOL || "774");
-if (![774, 777].includes(minecraftProtocol)) throw new Error(`unsupported EAGLER_MC_PROTOCOL: ${minecraftProtocol}`);
+if (![769, 773, 774, 777].includes(minecraftProtocol)) throw new Error(`unsupported EAGLER_MC_PROTOCOL: ${minecraftProtocol}`);
 const timeoutMs = 25000;
 
 const u16 = (n) => [n >> 8 & 255, n & 255];
