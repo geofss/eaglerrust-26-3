@@ -90,6 +90,8 @@ impl ProtocolSession {
                 0x02 => {
                     self.state = ProtocolState::Configuration;
                     events.push(ProtocolEvent::LoginSuccess(payload.to_vec()));
+                    events.push(ProtocolEvent::Send(client_information_packet()));
+                    events.push(ProtocolEvent::Send(brand_plugin_message()));
                 }
                 0x04 => {
                     let (message_id, id_bytes) = read_varint(payload)?;
@@ -109,33 +111,36 @@ impl ProtocolSession {
                 _ => return Err(ProtocolError::UnexpectedPacket { state: self.state, packet_id }),
             },
             ProtocolState::Configuration => match packet_id {
-                0x01 => {
+                // Java protocol 777 (26.3) clientbound Configuration packet IDs.
+                0x02 => {
                     self.state = ProtocolState::Disconnected;
                     events.push(ProtocolEvent::ServerDisconnect(payload.to_vec()));
                 }
-                0x02 => {
+                0x03 => {
+                    // Finish Configuration is the server's final configuration packet.
+                    // Only acknowledge it here; client information and brand were sent
+                    // immediately after the Eagler V5 login transition.
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
                     self.state = ProtocolState::Play;
-                    events.push(ProtocolEvent::Send(client_information_packet()));
-                    events.push(ProtocolEvent::Send(brand_plugin_message()));
-                    events.push(ProtocolEvent::Send(encode_ws_packet(0x02, &[])));
                     events.push(ProtocolEvent::ConfigurationFinished);
                 }
-                0x03 | 0x04 => {
+                0x04 => {
                     if payload.len() != 8 { return Err(ProtocolError::InvalidKeepAliveLength); }
-                    events.push(ProtocolEvent::Send(encode_ws_packet(packet_id, payload)));
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x04, payload)));
                 }
-                0x08 => {
+                0x05 => {
+                    if payload.len() != 4 { return Err(ProtocolError::InvalidKeepAliveLength); }
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x05, payload)));
+                }
+                0x0f => {
                     events.push(ProtocolEvent::Send(known_packs_empty_packet()));
                     events.push(ProtocolEvent::ConfigurationPacket {
                         packet_id, payload: payload.to_vec(),
                     });
                 }
-                0x00 | 0x06 | 0x07 => events.push(ProtocolEvent::ConfigurationPacket {
-                    packet_id, payload: payload.to_vec(),
-                }),
-                // Modern registry, tag, feature-flag, recipe and data-component
-                // packets vary by protocol revision. Preserve unknown payloads for
-                // diagnostics instead of killing the connection during sync.
+                // Registry Data (0x07), Feature Flags (0x0d), Update Tags (0x0e),
+                // and other configuration messages must be retained for the
+                // registry/configuration implementation rather than discarded.
                 _ => events.push(ProtocolEvent::ConfigurationPacket {
                     packet_id, payload: payload.to_vec(),
                 }),
@@ -175,6 +180,7 @@ pub struct EaglerV5Session {
     granted_username: Option<String>,
     granted_uuid: Option<[u8; 16]>,
     session_uuid: [u8; 16],
+    nickname_selection: bool,
 }
 
 impl Default for EaglerV5Session {
@@ -187,6 +193,7 @@ impl Default for EaglerV5Session {
             granted_username: None,
             granted_uuid: None,
             session_uuid: [0; 16],
+            nickname_selection: true,
         }
     }
 }
@@ -216,9 +223,11 @@ impl EaglerV5Session {
         let mut frame = Vec::with_capacity(64);
         frame.push(0x01); // CLIENT_VERSION
         frame.push(0x02); // V2+ handshake family (V5 fields)
-        frame.extend_from_slice(&1_u16.to_be_bytes());
-        frame.extend_from_slice(&5_u16.to_be_bytes()); // Eagler protocol V5
-        frame.extend_from_slice(&1_u16.to_be_bytes());
+        frame.extend_from_slice(&3_u16.to_be_bytes()); // supported Eagler protocol count
+        frame.extend_from_slice(&3_u16.to_be_bytes());
+        frame.extend_from_slice(&4_u16.to_be_bytes());
+        frame.extend_from_slice(&5_u16.to_be_bytes()); // V5 selected from supported versions
+        frame.extend_from_slice(&1_u16.to_be_bytes()); // supported Minecraft protocol count
         frame.extend_from_slice(&self.minecraft_protocol.to_be_bytes()); // Java 26.3 / 777
         write_eagler_ascii(&mut frame, "EaglerRust")?;
         write_eagler_ascii(&mut frame, "26.3")?;
@@ -243,9 +252,13 @@ impl EaglerV5Session {
             return self.process_eagler_login_message(message);
         }
 
-        // Eagler extension messages (skins, voice, cookies) use 0xEE and are
-        // intentionally ignored until their independent codecs are implemented.
-        if self.state == ProtocolState::Play && message.first() == Some(&0xEE) {
+        // EaglerXServer injects V5 extension frames with a leading 0xEE
+        // outside the vanilla Java packet stream. They can arrive immediately
+        // after login (while still in Configuration), not only during Play.
+        // Keep them out of the Java VarInt packet decoder until their codecs exist.
+        if matches!(self.state, ProtocolState::Configuration | ProtocolState::Play)
+            && message.first() == Some(&0xEE)
+        {
             return Ok(Vec::new());
         }
 
@@ -255,33 +268,34 @@ impl EaglerV5Session {
             ProtocolState::Handshake => return Err(ProtocolError::InvalidState),
             ProtocolState::Login => unreachable!(),
             ProtocolState::Configuration => match packet_id {
-                0x01 => {
+                // Java protocol 777 (26.3) clientbound Configuration packet IDs.
+                0x02 => {
                     self.state = ProtocolState::Disconnected;
                     events.push(ProtocolEvent::ServerDisconnect(payload.to_vec()));
                 }
-                0x02 => {
+                0x03 => {
+                    // The client settings and brand were sent on entry to Configuration.
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
                     self.state = ProtocolState::Play;
-                    events.push(ProtocolEvent::Send(client_information_packet()));
-                    events.push(ProtocolEvent::Send(brand_plugin_message()));
-                    events.push(ProtocolEvent::Send(encode_ws_packet(0x02, &[])));
                     events.push(ProtocolEvent::ConfigurationFinished);
                 }
-                0x03 | 0x04 => {
+                0x04 => {
                     if payload.len() != 8 { return Err(ProtocolError::InvalidKeepAliveLength); }
-                    events.push(ProtocolEvent::Send(encode_ws_packet(packet_id, payload)));
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x04, payload)));
                 }
-                0x08 => {
+                0x05 => {
+                    if payload.len() != 4 { return Err(ProtocolError::InvalidKeepAliveLength); }
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x05, payload)));
+                }
+                0x0f => {
                     events.push(ProtocolEvent::Send(known_packs_empty_packet()));
                     events.push(ProtocolEvent::ConfigurationPacket {
                         packet_id, payload: payload.to_vec(),
                     });
                 }
-                0x00 | 0x06 | 0x07 => events.push(ProtocolEvent::ConfigurationPacket {
-                    packet_id, payload: payload.to_vec(),
-                }),
-                // Modern registry, tag, feature-flag, recipe and data-component
-                // packets vary by protocol revision. Preserve unknown payloads for
-                // diagnostics instead of killing the connection during sync.
+                // Registry Data (0x07), Feature Flags (0x0d), Update Tags (0x0e),
+                // and other configuration messages must be retained for the
+                // registry/configuration implementation rather than discarded.
                 _ => events.push(ProtocolEvent::ConfigurationPacket {
                     packet_id, payload: payload.to_vec(),
                 }),
@@ -326,6 +340,9 @@ impl EaglerV5Session {
                 let _auth_method = read_eagler_u8(payload, &mut offset)?;
                 let salt_len = usize::from(read_eagler_u16(payload, &mut offset)?);
                 let _salt = read_eagler_take(payload, &mut offset, salt_len)?;
+                // V5 SERVER_VERSION appends the proxy's nickname-selection flag.
+                self.nickname_selection = read_eagler_u8(payload, &mut offset)? != 0;
+                if offset != payload.len() { return Err(ProtocolError::InvalidString); }
                 if eagler_protocol != 5 {
                     return Err(ProtocolError::EaglerProtocolMismatch { expected: 5, actual: eagler_protocol });
                 }
@@ -335,15 +352,23 @@ impl EaglerV5Session {
                         actual: minecraft_protocol,
                     });
                 }
-                let mut request = Vec::with_capacity(32);
+                let mut request = Vec::with_capacity(48);
                 request.push(0x04); // CLIENT_REQUEST_LOGIN
-                write_eagler_ascii(&mut request, &self.requested_username)?;
-                write_eagler_ascii(&mut request, "")?; // proxy default backend
-                request.push(0); // empty password
-                request.push(0); // no cookie offered
+                if self.nickname_selection {
+                    write_eagler_ascii(&mut request, &self.requested_username)?;
+                } else {
+                    write_eagler_ascii(&mut request, "")?;
+                }
+                write_eagler_ascii(&mut request, "default")?; // HandshakerInstance default backend
+                request.push(0); // empty auth password
+                request.push(0); // enableCookies = false
                 request.push(0); // cookie length
-                write_varint(&mut request, 0); // no optional capabilities requested
-                request.push(0); // no extended capabilities
+                // V5 standard caps: REDIRECT (2), NOTIFICATION (3), PAUSE_MENU (4).
+                write_varint(&mut request, (1 << 2) | (1 << 3) | (1 << 4));
+                write_varint(&mut request, 1); // REDIRECT supports version 0 (bit 0)
+                write_varint(&mut request, 1); // NOTIFICATION supports version 0 (bit 0)
+                write_varint(&mut request, 1); // PAUSE_MENU supports version 0 (bit 0)
+                request.push(0); // zero extended capabilities
                 events.push(ProtocolEvent::Send(request));
                 self.stage = EaglerLoginStage::AwaitAllowLogin;
             }
@@ -361,8 +386,23 @@ impl EaglerV5Session {
                 let uuid_bytes = read_eagler_take(payload, &mut offset, 16)?;
                 let mut uuid = [0_u8; 16];
                 uuid.copy_from_slice(uuid_bytes);
+
+                // V5 SERVER_ALLOW_LOGIN includes negotiated standard and extended
+                // capability versions after the username and UUID.
+                let (standard_caps, caps_len) = read_varint(&payload[offset..])?;
+                offset += caps_len;
+                let standard_version_count = standard_caps.count_ones() as usize;
+                let _standard_versions = read_eagler_take(payload, &mut offset, standard_version_count)?;
+                let extended_caps = usize::from(read_eagler_u8(payload, &mut offset)?);
+                for _ in 0..extended_caps {
+                    let _capability_uuid = read_eagler_take(payload, &mut offset, 16)?;
+                    let _capability_version = read_eagler_u8(payload, &mut offset)?;
+                }
+                if offset != payload.len() { return Err(ProtocolError::InvalidString); }
+
                 self.granted_username = Some(name);
                 self.granted_uuid = Some(uuid);
+                events.push(ProtocolEvent::Send(encode_eagler_profile_data()));
                 events.push(ProtocolEvent::Send(vec![0x08])); // CLIENT_FINISH_LOGIN
                 self.stage = EaglerLoginStage::AwaitServerFinish;
             }
@@ -379,10 +419,12 @@ impl EaglerV5Session {
                 let uuid = self.granted_uuid.ok_or(ProtocolError::InvalidState)?;
                 let login_success = encode_java_login_success(&name, uuid, self.session_uuid);
                 events.push(ProtocolEvent::LoginSuccess(login_success));
-                // EaglerHandshake consumes this vanilla Login Acknowledged packet
-                // and only then releases the backend's configuration/play packets.
-                events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
+                // The proxy has completed Eagler login. Java 1.20.2+ enters
+                // Configuration here; send client settings before the server's
+                // configuration stream begins, not when Finish Configuration arrives.
                 self.state = if self.minecraft_protocol >= 764 {
+                    events.push(ProtocolEvent::Send(client_information_packet()));
+                    events.push(ProtocolEvent::Send(brand_plugin_message()));
                     ProtocolState::Configuration
                 } else {
                     ProtocolState::Play
@@ -393,6 +435,30 @@ impl EaglerV5Session {
         }
         Ok(events)
     }
+}
+
+fn encode_eagler_profile_data() -> Vec<u8> {
+    // Match the Eagler V5/V4 profile-data envelope. The default profile uses
+    // preset skin 0 and preset cape 0; update_cert_v1 is an empty optional blob.
+    let entries: [(&str, &[u8]); 4] = [
+        ("brand_uuid_v1", &[
+            0xfa, 0xf2, 0x3e, 0x85, 0x71, 0x56, 0x31, 0xbd,
+            0x97, 0xee, 0xb4, 0x0e, 0x59, 0x9e, 0xf7, 0xb6,
+        ]),
+        ("skin_v2", &[0x01, 0, 0, 0, 0]),
+        ("cape_v1", &[0x01, 0, 0, 0, 0]),
+        ("update_cert_v1", &[]),
+    ];
+    let mut packet = Vec::with_capacity(128);
+    packet.push(0x07); // CLIENT_PROFILE_DATA
+    packet.push(entries.len() as u8);
+    for (key, value) in entries {
+        // Profile keys are one-byte-length ASCII; data lengths are unsigned u16.
+        let _ = write_eagler_ascii(&mut packet, key);
+        packet.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        packet.extend_from_slice(value);
+    }
+    packet
 }
 
 fn encode_java_login_success(name: &str, uuid: [u8; 16], session_uuid: [u8; 16]) -> Vec<u8> {
@@ -448,20 +514,23 @@ fn client_information_packet() -> Vec<u8> {
     payload.push(1);
     payload.push(0x7f);
     write_varint(&mut payload, 1);
-    payload.push(0);
-    payload.push(1);
+    payload.push(0); // text filtering disabled for offline Eagler profile
+    payload.push(1); // allow server listings
+    write_varint(&mut payload, 0); // particle status: all
     encode_ws_packet(0x00, &payload)
 }
 
 fn known_packs_empty_packet() -> Vec<u8> {
-    encode_ws_packet(0x05, &[0x00])
+    // Serverbound Select Known Packs (Configuration ID 0x07), zero shared packs.
+    encode_ws_packet(0x07, &[0x00])
 }
 
 fn brand_plugin_message() -> Vec<u8> {
     let mut payload = Vec::with_capacity(48);
     write_string(&mut payload, "minecraft:brand");
     write_string(&mut payload, "eaglercraft-26.1.2-web");
-    encode_ws_packet(0x01, &payload)
+    // Serverbound Plugin Message is Configuration ID 0x02 in protocol 777.
+    encode_ws_packet(0x02, &payload)
 }
 
 /// Encode the vanilla Java Edition 26.3 handshake packet (protocol 777).
@@ -558,6 +627,7 @@ mod tests {
         packet.push(5); packet.extend_from_slice(b"1.1.1");
         packet.push(0);
         packet.extend_from_slice(&0_u16.to_be_bytes());
+        packet.push(1); // nicknameSelection = true
         packet
     }
 
@@ -567,10 +637,12 @@ mod tests {
         let frames = session.begin_login("proxy.example", 25565, "RustPlayer", [9; 16]).unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(&frames[0][..2], &[0x01, 0x02]);
-        assert_eq!(&frames[0][2..4], &1_u16.to_be_bytes());
-        assert_eq!(&frames[0][4..6], &5_u16.to_be_bytes());
-        assert_eq!(&frames[0][6..8], &1_u16.to_be_bytes());
-        assert_eq!(&frames[0][8..10], &777_u16.to_be_bytes());
+        assert_eq!(&frames[0][2..4], &3_u16.to_be_bytes());
+        assert_eq!(&frames[0][4..6], &3_u16.to_be_bytes());
+        assert_eq!(&frames[0][6..8], &4_u16.to_be_bytes());
+        assert_eq!(&frames[0][8..10], &5_u16.to_be_bytes());
+        assert_eq!(&frames[0][10..12], &1_u16.to_be_bytes());
+        assert_eq!(&frames[0][12..14], &777_u16.to_be_bytes());
         // Data version 5023 is storage metadata, not an initialization field.
         assert_eq!(JAVA_26_3_DATA_VERSION, 5023);
         assert!(!frames[0].windows(4).any(|bytes| bytes == JAVA_26_3_DATA_VERSION.to_be_bytes()));
@@ -587,19 +659,58 @@ mod tests {
         let ProtocolEvent::Send(login_request) = &request[0] else { panic!("expected login request") };
         assert_eq!(login_request[0], 0x04);
         assert_eq!(&login_request[1..12], b"\x0aRustPlayer");
+        assert_eq!(&login_request[12..20], b"\x07default");
+        assert_eq!(&login_request[20..], &[0, 0, 0, 28, 1, 1, 1, 0]);
 
         let mut allow = vec![0x05, 10];
         allow.extend_from_slice(b"RustPlayer");
         allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]); // caps mask, 3 versions, no extended caps
         let finish = session.process_server_message(&allow).unwrap();
-        assert_eq!(finish, vec![ProtocolEvent::Send(vec![0x08])]);
+        assert_eq!(finish.len(), 2);
+        assert!(matches!(&finish[0], ProtocolEvent::Send(packet) if packet[0] == 0x07 && packet[1] == 4));
+        assert_eq!(finish[1], ProtocolEvent::Send(vec![0x08]));
 
         let events = session.process_server_message(&[0x09]).unwrap();
         assert_eq!(session.state(), ProtocolState::Configuration);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 3);
         let ProtocolEvent::LoginSuccess(login) = &events[0] else { panic!("expected synthetic Login Success") };
         assert_eq!(&login[..16], &[0x11; 16]);
-        assert_eq!(events[1], ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
+        assert_eq!(events[1], ProtocolEvent::Send(client_information_packet()));
+        assert_eq!(events[2], ProtocolEvent::Send(brand_plugin_message()));
+    }
+
+    #[test]
+    fn eagler_v5_profile_data_matches_server_envelope() {
+        let mut session = EaglerV5Session::new();
+        session.begin_login("proxy.example", 25565, "RustPlayer", [9; 16]).unwrap();
+        session.process_server_message(&eagler_server_version()).unwrap();
+        let mut allow = vec![0x05, 10];
+        allow.extend_from_slice(b"RustPlayer");
+        allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]);
+        let events = session.process_server_message(&allow).unwrap();
+        let ProtocolEvent::Send(packet) = &events[0] else { panic!("expected profile-data packet") };
+        assert_eq!(packet[0], 0x07);
+        assert_eq!(packet[1], 4);
+        let mut offset = 2;
+        let mut keys = Vec::new();
+        let mut lengths = Vec::new();
+        for _ in 0..4 {
+            let key_len = usize::from(packet[offset]);
+            offset += 1;
+            let key = std::str::from_utf8(&packet[offset..offset + key_len]).unwrap();
+            offset += key_len;
+            let value_len = usize::from(u16::from_be_bytes([packet[offset], packet[offset + 1]]));
+            offset += 2;
+            assert!(offset + value_len <= packet.len());
+            keys.push(key.to_owned());
+            lengths.push(value_len);
+            offset += value_len;
+        }
+        assert_eq!(offset, packet.len());
+        assert_eq!(keys, ["brand_uuid_v1", "skin_v2", "cape_v1", "update_cert_v1"]);
+        assert_eq!(lengths, [16, 5, 5, 0]);
     }
 
     #[test]
@@ -675,21 +786,51 @@ mod tests {
         let mut s = ProtocolSession::new();
         s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
         assert_eq!(s.process_server_message(&encode_ws_packet(2, &[9, 8])),
-            Ok(vec![ProtocolEvent::LoginSuccess(vec![9, 8])]));
-        assert_eq!(s.state(), ProtocolState::Configuration);
-        assert_eq!(s.process_server_message(&encode_ws_packet(0x08, &[0])),
             Ok(vec![
-                ProtocolEvent::Send(known_packs_empty_packet()),
-                ProtocolEvent::ConfigurationPacket { packet_id: 0x08, payload: vec![0] },
-            ]));
-        assert_eq!(s.process_server_message(&encode_ws_packet(2, &[])),
-            Ok(vec![
+                ProtocolEvent::LoginSuccess(vec![9, 8]),
                 ProtocolEvent::Send(client_information_packet()),
                 ProtocolEvent::Send(brand_plugin_message()),
-                ProtocolEvent::Send(encode_ws_packet(2, &[])),
+            ]));
+        assert_eq!(s.state(), ProtocolState::Configuration);
+        // Java 777: Select Known Packs is clientbound 0x0f;
+        // the empty response is serverbound 0x07.
+        assert_eq!(s.process_server_message(&encode_ws_packet(0x0f, &[0])),
+            Ok(vec![
+                ProtocolEvent::Send(known_packs_empty_packet()),
+                ProtocolEvent::ConfigurationPacket { packet_id: 0x0f, payload: vec![0] },
+            ]));
+        assert_eq!(known_packs_empty_packet(), encode_ws_packet(0x07, &[0]));
+        assert_eq!(brand_plugin_message()[0], 0x02);
+        assert_eq!(s.process_server_message(&encode_ws_packet(0x03, &[])),
+            Ok(vec![
+                ProtocolEvent::Send(encode_ws_packet(0x03, &[])),
                 ProtocolEvent::ConfigurationFinished,
             ]));
         assert_eq!(s.state(), ProtocolState::Play);
+    }
+
+    #[test]
+    fn eagler_v5_extension_frames_are_not_misclassified_as_java_configuration() {
+        let mut session = EaglerV5Session::new();
+        session.begin_login("proxy.example", 25565, "RustPlayer", [9; 16]).unwrap();
+        session.process_server_message(&eagler_server_version()).unwrap();
+        let mut allow = vec![0x05, 10];
+        allow.extend_from_slice(b"RustPlayer");
+        allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]);
+        session.process_server_message(&allow).unwrap();
+        session.process_server_message(&[0x09]).unwrap();
+
+        // EaglerXServer's injected V5 state-flag frame: 0xEE, sub-ID 0x21,
+        // UUID (16 bytes), then a VarInt state value.
+        let mut extension = vec![0xEE, 0x21];
+        extension.extend_from_slice(&[
+            0x55, 0xF6, 0x36, 0x01, 0x69, 0x41, 0x40, 0xD9,
+            0xB7, 0x7B, 0xCE, 0x7B, 0x99, 0xA6, 0x2E, 0x52,
+            0x01,
+        ]);
+        assert_eq!(session.process_server_message(&extension).unwrap(), Vec::<ProtocolEvent>::new());
+        assert_eq!(session.state(), ProtocolState::Configuration);
     }
 
     #[test]
@@ -700,6 +841,7 @@ mod tests {
         let mut allow = vec![0x05, 10];
         allow.extend_from_slice(b"RustPlayer");
         allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]); // caps mask, 3 versions, no extended caps
         session.process_server_message(&allow).unwrap();
         session.process_server_message(&[0x09]).unwrap();
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
@@ -716,20 +858,28 @@ mod tests {
     fn configuration_keepalive_and_ping_are_echoed() {
         let mut s = ProtocolSession::new();
         s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
-        s.process_server_message(&encode_ws_packet(2, &[])).unwrap();
-        for id in [3, 4] {
-            let payload = 123456_i64.to_be_bytes();
-            assert_eq!(s.process_server_message(&encode_ws_packet(id, &payload)),
-                Ok(vec![ProtocolEvent::Send(encode_ws_packet(id, &payload))]));
-        }
+        // Login Success (0x02) enters Configuration; keepalive and ping
+        // are tested before the server sends Finish Configuration (0x03).
+        s.process_server_message(&encode_ws_packet(0x02, &[])).unwrap();
+        let keep_alive = 123456_i64.to_be_bytes();
+        assert_eq!(
+            s.process_server_message(&encode_ws_packet(0x04, &keep_alive)),
+            Ok(vec![ProtocolEvent::Send(encode_ws_packet(0x04, &keep_alive))])
+        );
+        let ping = 123456_i32.to_be_bytes();
+        assert_eq!(
+            s.process_server_message(&encode_ws_packet(0x05, &ping)),
+            Ok(vec![ProtocolEvent::Send(encode_ws_packet(0x05, &ping))])
+        );
     }
 
     #[test]
     fn play_keepalive_uses_client_response_packet_id() {
         let mut s = ProtocolSession::new();
         s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
-        s.process_server_message(&encode_ws_packet(2, &[])).unwrap();
-        s.process_server_message(&encode_ws_packet(2, &[])).unwrap();
+        // Login Success enters Configuration, then Finish Configuration enters Play.
+        s.process_server_message(&encode_ws_packet(0x02, &[])).unwrap();
+        s.process_server_message(&encode_ws_packet(0x03, &[])).unwrap();
         let payload = (-77_i64).to_be_bytes();
         assert_eq!(s.process_server_message(&encode_ws_packet(0x2c, &payload)),
             Ok(vec![ProtocolEvent::Send(encode_ws_packet(0x11, &payload))]));

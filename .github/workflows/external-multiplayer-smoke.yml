@@ -1,0 +1,37 @@
+name: External Eagler V5 multiplayer smoke test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "protocol/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-smoke-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe-8b4t:
+    name: Probe 8b4t (Java protocol ${{ matrix.protocol }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        protocol: [769, 773, 774, 777]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify external DNS, TLS, WebSocket, and Eagler V5 login
+        env:
+          EAGLER_WS_URL: wss://8b4t.org
+          EAGLER_MC_PROTOCOL: "${{ matrix.protocol }}"
+        run: node tools/probe_8b4t_v5.mjs

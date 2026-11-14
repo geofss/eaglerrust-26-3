@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090d16">
-  <title>EaglerRust 26.3</title>
+  <title>Eaglercraft Rust Edition · 26.3</title>
   <style>
     :root {
       color-scheme: dark;
@@ -85,6 +85,40 @@
     .screen-head span:last-child { margin-left: auto; }
 
     .viewport-wrap { position: relative; }
+
+    .main-menu {
+      position: absolute; inset: 0; z-index: 6; display: grid; place-items: center;
+      overflow: auto; padding: 20px;
+      background: linear-gradient(135deg, rgba(5, 12, 22, .94), rgba(11, 29, 48, .88)),
+        radial-gradient(ellipse at 50% 15%, rgba(64, 137, 196, .35), transparent 60%);
+      backdrop-filter: blur(5px);
+    }
+    .menu-card { width: min(360px, 100%); text-align: center; }
+    .menu-mark {
+      width: 58px; height: 58px; margin: 0 auto 12px; display: grid; place-items: center;
+      border: 1px solid #5686b2; border-radius: 16px; background: linear-gradient(145deg, #254e72, #10263d);
+      color: #d9efff; font-size: 1.25rem; font-weight: 900; letter-spacing: -.08em; box-shadow: 0 8px 30px rgba(0,0,0,.35);
+    }
+    .menu-card h2 { margin: 0; color: #f1f7ff; font-size: clamp(1.8rem, 5vw, 2.65rem); line-height: 1.02; letter-spacing: -.06em; text-shadow: 0 3px 18px rgba(0,0,0,.5); }
+    .menu-card h2 span { color: #8fcaff; }
+    .menu-version { margin: 10px 0 22px; color: #a8bfd7; font-size: .78rem; }
+    .menu-buttons { display: grid; gap: 9px; }
+    .menu-buttons button, #main-menu-options > button {
+      min-height: 43px; padding: 10px 16px; border: 1px solid #527da5; border-radius: 9px;
+      background: linear-gradient(180deg, #244c70, #17334f); color: #f0f7ff; font: 700 .9rem ui-sans-serif, system-ui, sans-serif;
+      cursor: pointer; transition: filter .15s ease, transform .15s ease;
+    }
+    .menu-buttons button:hover, #main-menu-options > button:hover { filter: brightness(1.2); transform: translateY(-1px); }
+    .menu-buttons button:last-child { background: rgba(19, 35, 52, .9); border-color: #3a526b; }
+    .menu-footer { margin: 22px 0 0; color: #718ba5; font-size: .68rem; }
+    #main-menu-options h2 { margin-bottom: 14px; font-size: 1.8rem; }
+    #main-menu-options > p { color: #a8bfd7; }
+    .menu-controls { list-style: none; margin: 0 0 18px; padding: 0; text-align: left; }
+    .menu-controls li { display: flex; justify-content: space-between; gap: 14px; padding: 9px 2px; border-bottom: 1px solid rgba(130,166,199,.18); color: #b7cce0; font-size: .78rem; }
+    .menu-controls strong { color: #e7f3ff; }
+    [hidden] { display: none !important; }
+    .singleplayer-actions button#back-to-menu-singleplayer,
+    .connect-actions button[id^="back-to-menu"] { background: #202d3d; border-color: #52657b; }
 
     .hotbar {
       position: absolute;
@@ -293,7 +327,7 @@
       <div class="brand">
         <div class="mark" aria-hidden="true">ER</div>
         <div>
-          <h1>EaglerRust</h1>
+          <h1>Eaglercraft Rust Edition</h1>
           <div class="version">26.3 · Rust + WebAssembly</div>
         </div>
       </div>
@@ -307,7 +341,33 @@
         <span>WEBGL1 / VOXELS</span>
       </div>
       <div class="viewport-wrap">
-        <canvas id="game-canvas" aria-label="EaglerRust game viewport"></canvas>
+        <canvas id="game-canvas" aria-label="Eaglercraft Rust Edition game viewport"></canvas>
+        <section id="main-menu" class="main-menu" aria-label="Eaglercraft Rust Edition main menu">
+          <div id="main-menu-home" class="menu-card">
+            <div class="menu-mark" aria-hidden="true">ER</div>
+            <h2>Eaglercraft<br><span>Rust Edition</span></h2>
+            <p class="menu-version">26.3 · Powered by Rust + WebAssembly</p>
+            <div class="menu-buttons">
+              <button type="button" data-menu-action="singleplayer">Singleplayer</button>
+              <button type="button" data-menu-action="multiplayer">Multiplayer</button>
+              <button type="button" data-menu-action="options">Options</button>
+            </div>
+            <p class="menu-footer">An independent Rust/WASM client port · Work in progress</p>
+          </div>
+          <div id="main-menu-options" class="menu-card" hidden>
+            <h2>Options</h2>
+            <p>Controls</p>
+            <ul class="menu-controls">
+              <li><strong>W A S D</strong><span>Move</span></li>
+              <li><strong>Mouse / Drag</strong><span>Look around</span></li>
+              <li><strong>Space</strong><span>Jump</span></li>
+              <li><strong>Shift / Ctrl</strong><span>Sprint</span></li>
+              <li><strong>Left / Right click</strong><span>Break / place</span></li>
+              <li><strong>1–9</strong><span>Select hotbar slot</span></li>
+            </ul>
+            <button type="button" data-menu-action="menu-home">Back</button>
+          </div>
+        </section>
         <div class="crosshair" aria-hidden="true"></div>
         <div id="hotbar" class="hotbar" aria-label="Prototype nine-slot hotbar"></div>
         <div class="mobile-controls" aria-label="Touch movement controls">
@@ -331,10 +391,11 @@
       </div>
     </section>
 
-    <section class="singleplayer-panel" aria-label="Singleplayer worlds">
+    <section id="singleplayer-panel" class="singleplayer-panel" aria-label="Singleplayer worlds" hidden>
       <h2>Singleplayer world</h2>
       <p>Local Rust integrated-server simulation at 20 ticks per second. Worlds save in this browser and autosave every 30 seconds. This is an in-progress port, not full Minecraft parity.</p>
       <div class="singleplayer-actions">
+        <button id="back-to-menu-singleplayer" type="button">Main Menu</button>
         <label>World seed
           <input id="world-seed" type="number" min="0" max="4294967295" step="1" value="3932233766" inputmode="numeric">
         </label>
@@ -353,12 +414,12 @@
       <div id="singleplayer-status" role="status">Local world ready · not yet saved</div>
     </section>
 
-    <section class="connect-panel" aria-label="Experimental server connection">
+    <section id="connect-panel" class="connect-panel" aria-label="Experimental server connection" hidden>
       <h2>Experimental server connection</h2>
       <p>Eaglercraft V5 handshake · Minecraft protocol 777 (26.3 target). Standard EaglerXServer normally does not require an HTTP WebSocket subprotocol. Gameplay packet coverage is still under development. WebSocket lifecycle and packet diagnostics are printed in the browser developer console.</p>
       <div class="connect-grid">
         <label>WebSocket endpoint
-          <input id="ws-url" value="wss://" placeholder="wss://server.example/ws or ws://127.0.0.1:8765" autocomplete="url">
+          <input id="ws-url" value="wss://8b4t.org" placeholder="wss://server.example/ws or ws://127.0.0.1:8765" autocomplete="url">
         </label>
         <label>Optional HTTP WebSocket subprotocol
           <input id="ws-subprotocol" value="" placeholder="Leave blank for standard Eagler V5" autocomplete="off">
@@ -368,6 +429,7 @@
         </label>
       </div>
       <div class="connect-actions">
+        <button id="back-to-menu-multiplayer" type="button">Main Menu</button>
         <button id="connect-server" type="button">Connect</button>
         <button id="disconnect-server" type="button" disabled>Disconnect</button>
       </div>
@@ -415,6 +477,43 @@
     const status = document.querySelector("#status");
     const canvasId = "game-canvas";
     const canvas = document.getElementById(canvasId);
+    const mainMenu = document.getElementById("main-menu");
+    const menuHome = document.getElementById("main-menu-home");
+    const menuOptions = document.getElementById("main-menu-options");
+    const singleplayerPanel = document.getElementById("singleplayer-panel");
+    const connectPanel = document.getElementById("connect-panel");
+    const openMainMenu = () => {
+      mainMenu.hidden = false;
+      menuHome.hidden = false;
+      menuOptions.hidden = true;
+      singleplayerPanel.hidden = true;
+      connectPanel.hidden = true;
+    };
+    document.querySelectorAll("[data-menu-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const action = button.dataset.menuAction;
+        if (action === "options") {
+          menuHome.hidden = true;
+          menuOptions.hidden = false;
+        } else if (action === "menu-home") {
+          menuHome.hidden = false;
+          menuOptions.hidden = true;
+        } else if (action === "singleplayer") {
+          mainMenu.hidden = true;
+          singleplayerPanel.hidden = false;
+          connectPanel.hidden = true;
+          status.textContent = "Singleplayer selected · create or load a local world";
+        } else if (action === "multiplayer") {
+          mainMenu.hidden = true;
+          singleplayerPanel.hidden = true;
+          connectPanel.hidden = false;
+          document.getElementById("ws-url").value = "wss://8b4t.org";
+          status.textContent = "Multiplayer selected · 8b4t 26.3 test target";
+        }
+      });
+    });
+    document.getElementById("back-to-menu-singleplayer").addEventListener("click", openMainMenu);
+    document.getElementById("back-to-menu-multiplayer").addEventListener("click", openMainMenu);
 
     try {
       await init();
