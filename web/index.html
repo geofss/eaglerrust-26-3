@@ -491,6 +491,15 @@
           singleplayerStatus.textContent = `Save failed: ${error}`;
         }
       });
+      // Flush the most recent server snapshot when the page is backgrounded or closed.
+      window.addEventListener("pagehide", () => {
+        try {
+          const bytes = save_singleplayer_world();
+          localStorage.setItem(saveKey, bytesToBase64(bytes));
+        } catch (_) {
+          // The page may be closing during multiplayer or before renderer startup.
+        }
+      });
       document.getElementById("load-world").addEventListener("click", () => {
         try {
           const encoded = localStorage.getItem(saveKey);
