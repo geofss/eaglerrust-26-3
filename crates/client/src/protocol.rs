@@ -220,9 +220,11 @@ impl EaglerV5Session {
         let mut frame = Vec::with_capacity(64);
         frame.push(0x01); // CLIENT_VERSION
         frame.push(0x02); // V2+ handshake family (V5 fields)
-        frame.extend_from_slice(&1_u16.to_be_bytes());
-        frame.extend_from_slice(&5_u16.to_be_bytes()); // Eagler protocol V5
-        frame.extend_from_slice(&1_u16.to_be_bytes());
+        frame.extend_from_slice(&3_u16.to_be_bytes()); // supported Eagler protocol count
+        frame.extend_from_slice(&3_u16.to_be_bytes());
+        frame.extend_from_slice(&4_u16.to_be_bytes());
+        frame.extend_from_slice(&5_u16.to_be_bytes()); // V5 selected from supported versions
+        frame.extend_from_slice(&1_u16.to_be_bytes()); // supported Minecraft protocol count
         frame.extend_from_slice(&self.minecraft_protocol.to_be_bytes()); // Java 26.3 / 777
         write_eagler_ascii(&mut frame, "EaglerRust")?;
         write_eagler_ascii(&mut frame, "26.3")?;
@@ -587,10 +589,12 @@ mod tests {
         let frames = session.begin_login("proxy.example", 25565, "RustPlayer", [9; 16]).unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(&frames[0][..2], &[0x01, 0x02]);
-        assert_eq!(&frames[0][2..4], &1_u16.to_be_bytes());
-        assert_eq!(&frames[0][4..6], &5_u16.to_be_bytes());
-        assert_eq!(&frames[0][6..8], &1_u16.to_be_bytes());
-        assert_eq!(&frames[0][8..10], &777_u16.to_be_bytes());
+        assert_eq!(&frames[0][2..4], &3_u16.to_be_bytes());
+        assert_eq!(&frames[0][4..6], &3_u16.to_be_bytes());
+        assert_eq!(&frames[0][6..8], &4_u16.to_be_bytes());
+        assert_eq!(&frames[0][8..10], &5_u16.to_be_bytes());
+        assert_eq!(&frames[0][10..12], &1_u16.to_be_bytes());
+        assert_eq!(&frames[0][12..14], &777_u16.to_be_bytes());
         // Data version 5023 is storage metadata, not an initialization field.
         assert_eq!(JAVA_26_3_DATA_VERSION, 5023);
         assert!(!frames[0].windows(4).any(|bytes| bytes == JAVA_26_3_DATA_VERSION.to_be_bytes()));
