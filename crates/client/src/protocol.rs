@@ -109,33 +109,35 @@ impl ProtocolSession {
                 _ => return Err(ProtocolError::UnexpectedPacket { state: self.state, packet_id }),
             },
             ProtocolState::Configuration => match packet_id {
-                0x01 => {
+                // Java protocol 777 (26.3) clientbound Configuration packet IDs.
+                0x02 => {
                     self.state = ProtocolState::Disconnected;
                     events.push(ProtocolEvent::ServerDisconnect(payload.to_vec()));
                 }
-                0x02 => {
+                0x03 => {
                     self.state = ProtocolState::Play;
                     events.push(ProtocolEvent::Send(client_information_packet()));
                     events.push(ProtocolEvent::Send(brand_plugin_message()));
-                    events.push(ProtocolEvent::Send(encode_ws_packet(0x02, &[])));
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
                     events.push(ProtocolEvent::ConfigurationFinished);
                 }
-                0x03 | 0x04 => {
+                0x04 => {
                     if payload.len() != 8 { return Err(ProtocolError::InvalidKeepAliveLength); }
-                    events.push(ProtocolEvent::Send(encode_ws_packet(packet_id, payload)));
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x04, payload)));
                 }
-                0x08 => {
+                0x05 => {
+                    if payload.len() != 4 { return Err(ProtocolError::InvalidKeepAliveLength); }
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x05, payload)));
+                }
+                0x0f => {
                     events.push(ProtocolEvent::Send(known_packs_empty_packet()));
                     events.push(ProtocolEvent::ConfigurationPacket {
                         packet_id, payload: payload.to_vec(),
                     });
                 }
-                0x00 | 0x06 | 0x07 => events.push(ProtocolEvent::ConfigurationPacket {
-                    packet_id, payload: payload.to_vec(),
-                }),
-                // Modern registry, tag, feature-flag, recipe and data-component
-                // packets vary by protocol revision. Preserve unknown payloads for
-                // diagnostics instead of killing the connection during sync.
+                // Registry Data (0x07), Feature Flags (0x0d), Update Tags (0x0e),
+                // and other configuration messages must be retained for the
+                // registry/configuration implementation rather than discarded.
                 _ => events.push(ProtocolEvent::ConfigurationPacket {
                     packet_id, payload: payload.to_vec(),
                 }),
@@ -255,33 +257,35 @@ impl EaglerV5Session {
             ProtocolState::Handshake => return Err(ProtocolError::InvalidState),
             ProtocolState::Login => unreachable!(),
             ProtocolState::Configuration => match packet_id {
-                0x01 => {
+                // Java protocol 777 (26.3) clientbound Configuration packet IDs.
+                0x02 => {
                     self.state = ProtocolState::Disconnected;
                     events.push(ProtocolEvent::ServerDisconnect(payload.to_vec()));
                 }
-                0x02 => {
+                0x03 => {
                     self.state = ProtocolState::Play;
                     events.push(ProtocolEvent::Send(client_information_packet()));
                     events.push(ProtocolEvent::Send(brand_plugin_message()));
-                    events.push(ProtocolEvent::Send(encode_ws_packet(0x02, &[])));
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
                     events.push(ProtocolEvent::ConfigurationFinished);
                 }
-                0x03 | 0x04 => {
+                0x04 => {
                     if payload.len() != 8 { return Err(ProtocolError::InvalidKeepAliveLength); }
-                    events.push(ProtocolEvent::Send(encode_ws_packet(packet_id, payload)));
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x04, payload)));
                 }
-                0x08 => {
+                0x05 => {
+                    if payload.len() != 4 { return Err(ProtocolError::InvalidKeepAliveLength); }
+                    events.push(ProtocolEvent::Send(encode_ws_packet(0x05, payload)));
+                }
+                0x0f => {
                     events.push(ProtocolEvent::Send(known_packs_empty_packet()));
                     events.push(ProtocolEvent::ConfigurationPacket {
                         packet_id, payload: payload.to_vec(),
                     });
                 }
-                0x00 | 0x06 | 0x07 => events.push(ProtocolEvent::ConfigurationPacket {
-                    packet_id, payload: payload.to_vec(),
-                }),
-                // Modern registry, tag, feature-flag, recipe and data-component
-                // packets vary by protocol revision. Preserve unknown payloads for
-                // diagnostics instead of killing the connection during sync.
+                // Registry Data (0x07), Feature Flags (0x0d), Update Tags (0x0e),
+                // and other configuration messages must be retained for the
+                // registry/configuration implementation rather than discarded.
                 _ => events.push(ProtocolEvent::ConfigurationPacket {
                     packet_id, payload: payload.to_vec(),
                 }),
@@ -454,14 +458,16 @@ fn client_information_packet() -> Vec<u8> {
 }
 
 fn known_packs_empty_packet() -> Vec<u8> {
-    encode_ws_packet(0x05, &[0x00])
+    // Serverbound Select Known Packs (Configuration ID 0x07), zero shared packs.
+    encode_ws_packet(0x07, &[0x00])
 }
 
 fn brand_plugin_message() -> Vec<u8> {
     let mut payload = Vec::with_capacity(48);
     write_string(&mut payload, "minecraft:brand");
     write_string(&mut payload, "eaglercraft-26.1.2-web");
-    encode_ws_packet(0x01, &payload)
+    // Serverbound Plugin Message is Configuration ID 0x02 in protocol 777.
+    encode_ws_packet(0x02, &payload)
 }
 
 /// Encode the vanilla Java Edition 26.3 handshake packet (protocol 777).
