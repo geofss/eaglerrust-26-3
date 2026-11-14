@@ -52,6 +52,7 @@ struct Renderer {
     chunk_manager: ChunkManager,
     world_seed: u32,
     singleplayer_server: Option<IntegratedServer>,
+    singleplayer_paused: bool,
     autosave_due: bool,
     player: Player,
     camera_yaw: f32,
@@ -192,6 +193,7 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             chunk_manager,
             world_seed,
             singleplayer_server: Some(singleplayer_server),
+            singleplayer_paused: false,
             autosave_due: false,
             player,
             camera_yaw: 0.0,
@@ -306,6 +308,7 @@ pub fn create_singleplayer_world(seed: u32) -> Result<(), JsValue> {
         renderer.chunk_manager = chunk_manager;
         renderer.world_seed = seed;
         renderer.singleplayer_server = Some(server);
+        renderer.singleplayer_paused = false;
         renderer.autosave_due = false;
         renderer.section_meshes = meshes;
         renderer.player = Player::new(Vec3::new(
@@ -360,6 +363,7 @@ pub fn load_singleplayer_world(bytes: &[u8]) -> Result<(), JsValue> {
         renderer.world_seed = server.seed();
         let saved_player = server.player();
         renderer.singleplayer_server = Some(server);
+        renderer.singleplayer_paused = false;
         renderer.autosave_due = false;
         renderer.section_meshes = meshes;
         renderer.player = Player::new(Vec3::new(
@@ -393,6 +397,26 @@ pub fn set_singleplayer_game_mode(mode: GameMode) -> Result<(), JsValue> {
         server.set_game_mode(mode);
         Ok(())
     })
+}
+
+/// Pause or resume the local singleplayer simulation (used when the page is hidden).
+pub fn set_singleplayer_paused(paused: bool) {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(renderer) = borrowed.as_mut() else { return; };
+        if renderer.server_world_active { return; }
+        renderer.singleplayer_paused = paused;
+        if let Some(server) = renderer.singleplayer_server.as_mut() {
+            server.set_paused(paused);
+        }
+        renderer.tick_accumulator = 0.0;
+        renderer.last_tick_ms = js_sys::Date::now();
+        renderer.breaking_held = false;
+        renderer.mining.reset();
+        renderer.active_dig = None;
+        renderer.completed_dig = None;
+        renderer.pending_dig_actions.clear();
+    });
 }
 
 /// Return the active local game mode as its stable save value.
@@ -474,10 +498,12 @@ pub fn draw_frame() -> Result<(), JsValue> {
         };
         renderer.player.yaw = f64::from(renderer.camera_yaw);
         let now_ms = js_sys::Date::now();
-        let elapsed = ((now_ms - renderer.last_tick_ms) / 1000.0).clamp(0.0, 0.25);
+        let elapsed = if renderer.singleplayer_paused { 0.0 } else {
+            ((now_ms - renderer.last_tick_ms) / 1000.0).clamp(0.0, 0.25)
+        };
         renderer.last_tick_ms = now_ms;
         renderer.tick_accumulator += elapsed;
-        while renderer.tick_accumulator >= 0.05 {
+        while !renderer.singleplayer_paused && renderer.tick_accumulator >= 0.05 {
             renderer.player.tick(&renderer.world, &input);
             let center_chunk = BlockPosition::new(
                 renderer.player.position.x.floor() as i32, 0,
