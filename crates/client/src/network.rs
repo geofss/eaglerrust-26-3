@@ -182,7 +182,7 @@ mod browser {
         on_open: Closure<dyn FnMut(Event)>,
         on_message: Closure<dyn FnMut(MessageEvent)>,
         on_error: Closure<dyn FnMut(Event)>,
-        on_close: Closure<dyn FnMut(Event)>,
+        on_close: Closure<dyn FnMut(CloseEvent)>,
     }
 
     impl BrowserWebSocket {
