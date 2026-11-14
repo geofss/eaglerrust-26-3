@@ -83,6 +83,8 @@ function runTick() {
         worldTime: result.worldTime, dayTime: result.dayTime, autosaveDue: true }, [snapshot.buffer]);
     }
   } catch (error) {
+    paused = true;
+    try { worker_server_set_paused(true); } catch (_) {}
     fail(undefined, error);
   }
 }
@@ -121,7 +123,13 @@ self.addEventListener("message", async (event) => {
         if (!initialized) throw new Error("Worker server is not initialized");
         const { x, y, z, state } = message;
         if (![x, y, z, state].every(Number.isInteger)) throw new Error("Invalid block edit");
-        const changed = worker_server_set_block(x, y, z, state);
+        let changed;
+        try {
+          changed = worker_server_set_block(x, y, z, state);
+        } catch (error) {
+          sendSnapshot("edit-result", requestId); // Roll back the renderer's optimistic edit.
+          throw error;
+        }
         if (changed) {
           publishSectionDeltas(requestId);
           send("edit-result", { requestId, changed: true });
@@ -132,7 +140,13 @@ self.addEventListener("message", async (event) => {
         if (!initialized) throw new Error("Worker server is not initialized");
         const { x, y, z } = message;
         if (![x, y, z].every(Number.isInteger)) throw new Error("Invalid block break");
-        const changed = worker_server_break_block(x, y, z);
+        let changed;
+        try {
+          changed = worker_server_break_block(x, y, z);
+        } catch (error) {
+          sendSnapshot("edit-result", requestId); // Restore the authoritative section after rejection.
+          throw error;
+        }
         if (changed) {
           publishSectionDeltas(requestId);
           send("edit-result", { requestId, changed: true });
