@@ -683,16 +683,20 @@ mod tests {
         assert_eq!(s.process_server_message(&encode_ws_packet(2, &[9, 8])),
             Ok(vec![ProtocolEvent::LoginSuccess(vec![9, 8])]));
         assert_eq!(s.state(), ProtocolState::Configuration);
-        assert_eq!(s.process_server_message(&encode_ws_packet(0x08, &[0])),
+        // Java 777: Select Known Packs is clientbound 0x0f;
+        // the empty response is serverbound 0x07.
+        assert_eq!(s.process_server_message(&encode_ws_packet(0x0f, &[0])),
             Ok(vec![
                 ProtocolEvent::Send(known_packs_empty_packet()),
-                ProtocolEvent::ConfigurationPacket { packet_id: 0x08, payload: vec![0] },
+                ProtocolEvent::ConfigurationPacket { packet_id: 0x0f, payload: vec![0] },
             ]));
-        assert_eq!(s.process_server_message(&encode_ws_packet(2, &[])),
+        assert_eq!(known_packs_empty_packet(), encode_ws_packet(0x07, &[0]));
+        assert_eq!(brand_plugin_message()[0], 0x02);
+        assert_eq!(s.process_server_message(&encode_ws_packet(0x03, &[])),
             Ok(vec![
                 ProtocolEvent::Send(client_information_packet()),
                 ProtocolEvent::Send(brand_plugin_message()),
-                ProtocolEvent::Send(encode_ws_packet(2, &[])),
+                ProtocolEvent::Send(encode_ws_packet(0x03, &[])),
                 ProtocolEvent::ConfigurationFinished,
             ]));
         assert_eq!(s.state(), ProtocolState::Play);
