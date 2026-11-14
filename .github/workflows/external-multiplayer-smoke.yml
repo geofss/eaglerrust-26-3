@@ -11,9 +11,13 @@ permissions:
 
 jobs:
   probe-8b4t:
-    name: Probe 8b4t from GitHub-hosted network
+    name: Probe 8b4t (Java protocol ${{ matrix.protocol }})
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        protocol: [769, 773, 774, 777]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,5 +28,5 @@ jobs:
       - name: Verify external DNS, TLS, WebSocket, and Eagler V5 login
         env:
           EAGLER_WS_URL: wss://8b4t.org
-          EAGLER_MC_PROTOCOL: "774"
+          EAGLER_MC_PROTOCOL: "${{ matrix.protocol }}"
         run: node tools/probe_8b4t_v5.mjs
