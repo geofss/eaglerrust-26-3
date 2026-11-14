@@ -380,8 +380,23 @@ impl EaglerV5Session {
                 let uuid_bytes = read_eagler_take(payload, &mut offset, 16)?;
                 let mut uuid = [0_u8; 16];
                 uuid.copy_from_slice(uuid_bytes);
+
+                // V5 SERVER_ALLOW_LOGIN includes negotiated standard and extended
+                // capability versions after the username and UUID.
+                let (standard_caps, caps_len) = read_varint(&payload[offset..])?;
+                offset += caps_len;
+                let standard_version_count = standard_caps.count_ones() as usize;
+                let _standard_versions = read_eagler_take(payload, &mut offset, standard_version_count)?;
+                let extended_caps = usize::from(read_eagler_u8(payload, &mut offset)?);
+                for _ in 0..extended_caps {
+                    let _capability_uuid = read_eagler_take(payload, &mut offset, 16)?;
+                    let _capability_version = read_eagler_u8(payload, &mut offset)?;
+                }
+                if offset != payload.len() { return Err(ProtocolError::InvalidString); }
+
                 self.granted_username = Some(name);
                 self.granted_uuid = Some(uuid);
+                events.push(ProtocolEvent::Send(encode_eagler_profile_data()));
                 events.push(ProtocolEvent::Send(vec![0x08])); // CLIENT_FINISH_LOGIN
                 self.stage = EaglerLoginStage::AwaitServerFinish;
             }
@@ -412,6 +427,30 @@ impl EaglerV5Session {
         }
         Ok(events)
     }
+}
+
+fn encode_eagler_profile_data() -> Vec<u8> {
+    // Match the Eagler V5/V4 profile-data envelope. The default profile uses
+    // preset skin 0 and preset cape 0; update_cert_v1 is an empty optional blob.
+    let entries: [(&str, &[u8]); 4] = [
+        ("brand_uuid_v1", &[
+            0xfa, 0xf2, 0x3e, 0x85, 0x71, 0x56, 0x31, 0xbd,
+            0x97, 0xee, 0xb4, 0x0e, 0x59, 0x9e, 0xf7, 0xb6,
+        ]),
+        ("skin_v2", &[0x01, 0, 0, 0, 0]),
+        ("cape_v1", &[0x01, 0, 0, 0, 0]),
+        ("update_cert_v1", &[]),
+    ];
+    let mut packet = Vec::with_capacity(128);
+    packet.push(0x07); // CLIENT_PROFILE_DATA
+    packet.push(entries.len() as u8);
+    for (key, value) in entries {
+        // Profile keys are one-byte-length ASCII; data lengths are unsigned u16.
+        let _ = write_eagler_ascii(&mut packet, key);
+        packet.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        packet.extend_from_slice(value);
+    }
+    packet
 }
 
 fn encode_java_login_success(name: &str, uuid: [u8; 16], session_uuid: [u8; 16]) -> Vec<u8> {
@@ -617,8 +656,11 @@ mod tests {
         let mut allow = vec![0x05, 10];
         allow.extend_from_slice(b"RustPlayer");
         allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]); // caps mask, 3 versions, no extended caps
         let finish = session.process_server_message(&allow).unwrap();
-        assert_eq!(finish, vec![ProtocolEvent::Send(vec![0x08])]);
+        assert_eq!(finish.len(), 2);
+        assert!(matches!(&finish[0], ProtocolEvent::Send(packet) if packet[0] == 0x07 && packet[1] == 4));
+        assert_eq!(finish[1], ProtocolEvent::Send(vec![0x08]));
 
         let events = session.process_server_message(&[0x09]).unwrap();
         assert_eq!(session.state(), ProtocolState::Configuration);
