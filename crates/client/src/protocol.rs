@@ -279,7 +279,12 @@ impl EaglerV5Session {
                 0x00 | 0x06 | 0x07 => events.push(ProtocolEvent::ConfigurationPacket {
                     packet_id, payload: payload.to_vec(),
                 }),
-                _ => return Err(ProtocolError::UnexpectedPacket { state: self.state, packet_id }),
+                // Modern registry, tag, feature-flag, recipe and data-component
+                // packets vary by protocol revision. Preserve unknown payloads for
+                // diagnostics instead of killing the connection during sync.
+                _ => events.push(ProtocolEvent::ConfigurationPacket {
+                    packet_id, payload: payload.to_vec(),
+                }),
             },
             ProtocolState::Play => match packet_id {
                 0x1a => {
