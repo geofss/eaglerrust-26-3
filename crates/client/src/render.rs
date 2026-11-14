@@ -395,6 +395,20 @@ pub fn set_singleplayer_game_mode(mode: GameMode) -> Result<(), JsValue> {
     })
 }
 
+/// Return the active local game mode as its stable save value.
+pub fn singleplayer_game_mode() -> Result<u8, JsValue> {
+    RENDERER.with(|slot| {
+        let borrowed = slot.borrow();
+        let renderer = borrowed.as_ref().ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        if renderer.server_world_active {
+            return Err(JsValue::from_str("Multiplayer world has no local game mode"));
+        }
+        renderer.singleplayer_server.as_ref()
+            .map(|server| server.game_mode().as_u8())
+            .ok_or_else(|| JsValue::from_str("Local integrated server is not active"))
+    })
+}
+
 /// Return true once when the local server reaches its autosave interval.
 pub fn take_singleplayer_autosave_request() -> bool {
     RENDERER.with(|slot| {
@@ -839,6 +853,8 @@ pub fn place_target(state: u32) -> bool {
         );
         let changed = if renderer.server_world_active {
             place_block(&mut renderer.world, hit, BlockStateId(state))
+        } else if hit.face == [0, 0, 0] || renderer.world.get_block(destination) != crate::world::AIR {
+            false
         } else if let Some(server) = renderer.singleplayer_server.as_mut() {
             matches!(server.set_block(destination, BlockStateId(state)), Ok(true))
         } else {
