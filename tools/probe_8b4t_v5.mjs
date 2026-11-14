@@ -97,7 +97,7 @@ ws.addEventListener("message", (event) => {
       if (p !== data.length) throw new Error(`unexpected SERVER_VERSION trailing bytes: ${data.length - p}`);
       console.log(`SERVER_VERSION eagler=${eagler} java=${java} brand='${brand}' version='${version}' auth=${auth} saltBytes=${saltLen} nicknameSelection=${nicknameSelection}`);
       if (eagler !== 5 || java !== 777) throw new Error(`incompatible protocol: expected Eagler 5 / Java 777, got ${eagler} / ${java}`);
-      stage = "allow-login";
+      stage = "backend-allow-login";
       const standardCaps = (1 << 2) | (1 << 3) | (1 << 4); // REDIRECT, NOTIFICATION, PAUSE_MENU
       send(ws, [
         0x04,
@@ -114,7 +114,7 @@ ws.addEventListener("message", (event) => {
       ], "EAGLER V5 CLIENT_REQUEST_LOGIN (source-matched V5 layout)");
       return;
     }
-    if (stage === "allow-login") {
+    if (stage === "backend-allow-login") {
       if (id === 0xff) {
         const code = data.length >= 2 ? data[1] : -1;
         const size = data.length >= 4 ? data.readUInt16BE(2) : 0;
@@ -154,28 +154,47 @@ ws.addEventListener("message", (event) => {
       }
       if (p !== data.length) throw new Error(`ALLOW_LOGIN unexpected trailing bytes: ${data.length - p}`);
       console.log(`ALLOW_LOGIN name='${name}' uuid=${uuid} standardCaps=0x${standardCaps.toString(16)} versions=${standardCapVersions.join(",")} extendedCaps=${extendedCaps}`);
-      // Stop here deliberately: the real client sends profile-data packets (brand UUID,
-      // skin, cape, update certificate) before CLIENT_FINISH_LOGIN. This probe isolates
-      // whether the corrected CLIENT_REQUEST_LOGIN is accepted without faking those assets.
-      finish("PASS: Eagler V5 CLIENT_REQUEST_LOGIN accepted (SERVER_ALLOW_LOGIN received). Profile-data and finish-login stages remain untested.");
+      // EaglerXServer emits SERVER_ALLOW_LOGIN only after its backend login succeeds.
+      // Exercise the V5 profile-data envelope and finish-login transition too.
+      const profileEntries = [
+        ["brand_uuid_v1", [0xfa,0xf2,0x3e,0x85,0x71,0x56,0x31,0xbd,0x97,0xee,0xb4,0x0e,0x59,0x9e,0xf7,0xb6]],
+        ["skin_v2", [0x01,0,0,0,0]],
+        ["cape_v1", [0x01,0,0,0,0]],
+        ["update_cert_v1", []]
+      ];
+      const profile = [0x07, profileEntries.length];
+      for (const [key, value] of profileEntries) profile.push(...ascii(key), ...u16(value.length), ...value);
+      stage = "server-finish";
+      send(ws, profile, "EAGLER V5 CLIENT_PROFILE_DATA");
+      send(ws, [0x08], "EAGLER V5 CLIENT_FINISH_LOGIN");
       return;
     }
     if (stage === "server-finish") {
-      if (id !== 0x09) throw new Error(`expected SERVER_FINISH_LOGIN 0x09, got 0x${id.toString(16)}`);
-      console.log("SERVER_FINISH_LOGIN accepted; Eagler V5 login completed.");
+      if (id === 0xff) {
+        const code = data.length >= 2 ? data[1] : -1;
+        const size = data.length >= 4 ? data.readUInt16BE(2) : 0;
+        throw new Error("Eagler server error 0x" + code.toString(16) + ": " + data.subarray(4, 4 + size).toString("utf8"));
+      }
+      if (id !== 0x09) throw new Error("expected Eagler SERVER_FINISH_LOGIN 0x09, got 0x" + id.toString(16));
+      console.log("SERVER_FINISH_LOGIN received; proxy has completed the Eagler handshake.");
+      // The proxy sends Java Login Acknowledged to its backend internally.
+      // The Eagler client must NOT send packet 0x03 here.
       stage = "configuration";
-      // Vanilla Login Acknowledged (packet id 0x03, VarInt) releases backend configuration.
-      finish("PASS: DNS/TLS/WebSocket + Eagler V5 protocol 5 / Java 777 + Eaglercraft login request accepted + server finish login received.");
-      return;
       return;
     }
     if (stage === "configuration") {
-      console.log(`CONFIGURATION_TRAFFIC observed (first packet id 0x${id.toString(16)}).`);
-      finish("PASS: DNS/TLS/WebSocket + Eagler V5 protocol 5 + Java protocol 777 + login completed; configuration traffic received.");
+      const [javaPacketId] = readVarInt(data, 0);
+      console.log("CONFIGURATION_TRAFFIC observed (first Java packet id 0x" + javaPacketId.toString(16) + ").");
+      finish("PASS: Eagler V5 login, profile-data, finish-login, and first Java configuration packet received.");
     }
   } catch (error) { fail(error); }
 });
 ws.addEventListener("error", () => fail(new Error("WebSocket error (browser/runtime may hide the underlying TLS or network reason)")));
 ws.addEventListener("close", (event) => {
-  if (!done) fail(new Error(`closed before completion: code=${event.code} reason='${event.reason}' clean=${event.wasClean}`));
+  if (!done) {
+    const context = stage === "backend-allow-login"
+      ? " (SERVER_ALLOW_LOGIN was never reached; EaglerXServer performs its backend login before sending it)"
+      : "";
+    fail(new Error("closed before completion" + context + ": code=" + event.code + " reason='" + event.reason + "' clean=" + event.wasClean));
+  }
 });
