@@ -100,7 +100,7 @@ ws.addEventListener("message", (event) => {
       console.log(`SERVER_VERSION eagler=${eagler} java=${java} brand='${brand}' version='${version}' auth=${auth} saltBytes=${saltLen} nicknameSelection=${nicknameSelection}`);
       if (eagler !== 5 || java !== minecraftProtocol) throw new Error(`incompatible protocol: requested Eagler 5 / Java ${minecraftProtocol}, server selected Eagler ${eagler} / Java ${java}`);
       stage = "backend-allow-login";
-      const standardCaps = (1 << 2) | (1 << 3) | (1 << 4); // REDIRECT, NOTIFICATION, PAUSE_MENU
+      const standardCaps = (1 << 2) | (1 << 3) | (1 << 4) | (1 << 6); // REDIRECT, NOTIFICATION, PAUSE_MENU, COOKIE
       send(ws, [
         0x04,
         ...(nicknameSelection ? ascii(username) : ascii("")),
@@ -112,6 +112,7 @@ ws.addEventListener("message", (event) => {
         ...varInt(1),             // REDIRECT supports version 0 (bit 0)
         ...varInt(1),             // NOTIFICATION supports version 0 (bit 0)
         ...varInt(1),             // PAUSE_MENU supports version 0 (bit 0)
+        ...varInt(1),             // COOKIE supports version 0 (bit 0)
         0                         // zero extended capabilities
       ], `EAGLER V5 CLIENT_REQUEST_LOGIN (username=${username}, cookies=enabled, cookieBytes=0)`);
       return;
