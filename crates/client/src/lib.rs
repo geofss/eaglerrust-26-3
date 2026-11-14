@@ -632,3 +632,33 @@ pub fn singleplayer_worker_player_state() -> Vec<f64> {
 pub fn take_singleplayer_worker_edits() -> Vec<i32> {
     render::take_singleplayer_worker_edits()
 }
+
+/// Drain dirty worker sections as x/y/z + 4096 state-ID records.
+#[wasm_bindgen]
+pub fn worker_server_take_section_updates() -> Vec<i32> {
+    WORKER_SERVER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(server) = borrowed.as_mut() else { return Vec::new(); };
+        let dirty = server.world_mut().take_dirty_sections();
+        let mut output = Vec::with_capacity(dirty.len() * 4099);
+        for position in dirty {
+            if let Some(states) = server.world().section_states(position) {
+                output.extend_from_slice(&[position.x, position.y, position.z]);
+                output.extend(states.iter().map(|state| state.0 as i32));
+            }
+        }
+        output
+    })
+}
+
+/// Loaded section coordinates as x/y/z triplets.
+#[wasm_bindgen]
+pub fn worker_server_loaded_sections() -> Vec<i32> {
+    WORKER_SERVER.with(|slot| {
+        let borrowed = slot.borrow();
+        let Some(server) = borrowed.as_ref() else { return Vec::new(); };
+        let mut output = Vec::new();
+        for p in server.world().loaded_sections() { output.extend_from_slice(&[p.x, p.y, p.z]); }
+        output
+    })
+}
