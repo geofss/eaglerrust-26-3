@@ -584,8 +584,9 @@
           workerReady = false;
           if (singleplayerWorker) singleplayerWorker.terminate();
           singleplayerWorker = null;
-          set_singleplayer_worker_active(false);
-          singleplayerStatus.textContent = "Worker stopped: " + error.message;
+          // Keep the last authoritative renderer mirror frozen. The shadow server
+          // may be behind the worker and must not silently resume as if authoritative.
+          singleplayerStatus.textContent = "Worker stopped; world frozen until reload: " + error.message;
         });
         const payload = saveBytes.slice();
         singleplayerWorker.postMessage({ type: "init", requestId, save: payload }, [payload.buffer]);
