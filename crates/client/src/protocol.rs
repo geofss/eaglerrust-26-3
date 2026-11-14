@@ -413,9 +413,9 @@ impl EaglerV5Session {
                 let uuid = self.granted_uuid.ok_or(ProtocolError::InvalidState)?;
                 let login_success = encode_java_login_success(&name, uuid, self.session_uuid);
                 events.push(ProtocolEvent::LoginSuccess(login_success));
-                // EaglerHandshake consumes this vanilla Login Acknowledged packet
-                // and only then releases the backend's configuration/play packets.
-                events.push(ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
+                // CLIENT_FINISH_LOGIN (0x08) already made the proxy enter play state.
+                // EaglerXServer sends Java Login Acknowledged (0x03) to its backend
+                // internally; the Eagler client must not send that backend-only packet.
                 self.state = if self.minecraft_protocol >= 764 {
                     ProtocolState::Configuration
                 } else {
@@ -664,10 +664,42 @@ mod tests {
 
         let events = session.process_server_message(&[0x09]).unwrap();
         assert_eq!(session.state(), ProtocolState::Configuration);
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 1);
         let ProtocolEvent::LoginSuccess(login) = &events[0] else { panic!("expected synthetic Login Success") };
         assert_eq!(&login[..16], &[0x11; 16]);
-        assert_eq!(events[1], ProtocolEvent::Send(encode_ws_packet(0x03, &[])));
+    }
+
+    #[test]
+    fn eagler_v5_profile_data_matches_server_envelope() {
+        let mut session = EaglerV5Session::new();
+        session.begin_login("proxy.example", 25565, "RustPlayer", [9; 16]).unwrap();
+        session.process_server_message(&eagler_server_version()).unwrap();
+        let mut allow = vec![0x05, 10];
+        allow.extend_from_slice(b"RustPlayer");
+        allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]);
+        let events = session.process_server_message(&allow).unwrap();
+        let ProtocolEvent::Send(packet) = &events[0] else { panic!("expected profile-data packet") };
+        assert_eq!(packet[0], 0x07);
+        assert_eq!(packet[1], 4);
+        let mut offset = 2;
+        let mut keys = Vec::new();
+        let mut lengths = Vec::new();
+        for _ in 0..4 {
+            let key_len = usize::from(packet[offset]);
+            offset += 1;
+            let key = std::str::from_utf8(&packet[offset..offset + key_len]).unwrap();
+            offset += key_len;
+            let value_len = usize::from(u16::from_be_bytes([packet[offset], packet[offset + 1]]));
+            offset += 2;
+            assert!(offset + value_len <= packet.len());
+            keys.push(key.to_owned());
+            lengths.push(value_len);
+            offset += value_len;
+        }
+        assert_eq!(offset, packet.len());
+        assert_eq!(keys, ["brand_uuid_v1", "skin_v2", "cape_v1", "update_cert_v1"]);
+        assert_eq!(lengths, [16, 5, 5, 0]);
     }
 
     #[test]
