@@ -110,7 +110,7 @@ impl IntegratedServer {
             seed: save.seed,
             world: save.world,
             chunks,
-            game_mode: GameMode::Creative,
+            game_mode: GameMode::from_u8(save.game_mode),
             player: ServerPlayerState {
                 position: save.player_position,
                 yaw: save.yaw,
@@ -203,6 +203,7 @@ impl IntegratedServer {
             player_position: self.player.position,
             yaw: self.player.yaw,
             pitch: self.player.pitch,
+            game_mode: self.game_mode.as_u8(),
             world: self.world.clone(),
         }
     }
@@ -273,5 +274,6 @@ mod tests {
         assert_eq!(restored.seed, 456);
         assert_eq!(restored.player_position, player.position);
         assert_eq!(restored.yaw, player.yaw);
+        assert_eq!(restored.game_mode, GameMode::Creative.as_u8());
     }
 }
