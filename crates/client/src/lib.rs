@@ -544,11 +544,8 @@ pub fn worker_server_tick(
         js_sys::Reflect::set(&result, &JsValue::from_str("autosaveDue"), &JsValue::from_bool(tick.autosave_due))?;
         let world_changed = tick.chunk_update.loaded_columns > 0 || tick.chunk_update.unloaded_columns > 0;
         js_sys::Reflect::set(&result, &JsValue::from_str("worldChanged"), &JsValue::from_bool(world_changed))?;
-        if world_changed || tick.autosave_due {
-            let snapshot = server.encode_save().map_err(|error| JsValue::from_str(&error.to_string()))?;
-            let bytes = js_sys::Uint8Array::from(snapshot.as_slice());
-            js_sys::Reflect::set(&result, &JsValue::from_str("snapshot"), &bytes)?;
-        }
+        // Section-level IPC carries world mutations. Full serialization is reserved
+        // for explicit save/autosave requests, avoiding a full-world encode per chunk.
         Ok(result.into())
     })
 }
