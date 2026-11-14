@@ -636,15 +636,7 @@ pub fn worker_server_take_section_updates() -> Vec<i32> {
     WORKER_SERVER.with(|slot| {
         let mut borrowed = slot.borrow_mut();
         let Some(server) = borrowed.as_mut() else { return Vec::new(); };
-        let dirty = server.world_mut().take_dirty_sections();
-        let mut output = Vec::with_capacity(dirty.len() * 4099);
-        for position in dirty {
-            if let Some(states) = server.world().section_states(position) {
-                output.extend_from_slice(&[position.x, position.y, position.z]);
-                output.extend(states.iter().map(|state| state.0 as i32));
-            }
-        }
-        output
+        server.world_mut().take_dirty_section_records()
     })
 }
 
