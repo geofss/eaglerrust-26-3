@@ -177,6 +177,7 @@ pub struct EaglerV5Session {
     granted_username: Option<String>,
     granted_uuid: Option<[u8; 16]>,
     session_uuid: [u8; 16],
+    nickname_selection: bool,
 }
 
 impl Default for EaglerV5Session {
@@ -189,6 +190,7 @@ impl Default for EaglerV5Session {
             granted_username: None,
             granted_uuid: None,
             session_uuid: [0; 16],
+            nickname_selection: true,
         }
     }
 }
@@ -330,6 +332,9 @@ impl EaglerV5Session {
                 let _auth_method = read_eagler_u8(payload, &mut offset)?;
                 let salt_len = usize::from(read_eagler_u16(payload, &mut offset)?);
                 let _salt = read_eagler_take(payload, &mut offset, salt_len)?;
+                // V5 SERVER_VERSION appends the proxy's nickname-selection flag.
+                self.nickname_selection = read_eagler_u8(payload, &mut offset)? != 0;
+                if offset != payload.len() { return Err(ProtocolError::InvalidString); }
                 if eagler_protocol != 5 {
                     return Err(ProtocolError::EaglerProtocolMismatch { expected: 5, actual: eagler_protocol });
                 }
@@ -339,15 +344,23 @@ impl EaglerV5Session {
                         actual: minecraft_protocol,
                     });
                 }
-                let mut request = Vec::with_capacity(32);
+                let mut request = Vec::with_capacity(48);
                 request.push(0x04); // CLIENT_REQUEST_LOGIN
-                write_eagler_ascii(&mut request, &self.requested_username)?;
-                write_eagler_ascii(&mut request, "")?; // proxy default backend
-                request.push(0); // empty password
-                request.push(0); // no cookie offered
+                if self.nickname_selection {
+                    write_eagler_ascii(&mut request, &self.requested_username)?;
+                } else {
+                    write_eagler_ascii(&mut request, "")?;
+                }
+                write_eagler_ascii(&mut request, "default")?; // HandshakerInstance default backend
+                request.push(0); // empty auth password
+                request.push(0); // enableCookies = false
                 request.push(0); // cookie length
-                write_varint(&mut request, 0); // no optional capabilities requested
-                request.push(0); // no extended capabilities
+                // V5 standard caps: REDIRECT (2), NOTIFICATION (3), PAUSE_MENU (4).
+                write_varint(&mut request, (1 << 2) | (1 << 3) | (1 << 4));
+                write_varint(&mut request, 0); // REDIRECT capability version bitset
+                write_varint(&mut request, 0); // NOTIFICATION capability version bitset
+                write_varint(&mut request, 0); // PAUSE_MENU capability version bitset
+                request.push(0); // zero extended capabilities
                 events.push(ProtocolEvent::Send(request));
                 self.stage = EaglerLoginStage::AwaitAllowLogin;
             }
@@ -564,6 +577,7 @@ mod tests {
         packet.push(5); packet.extend_from_slice(b"1.1.1");
         packet.push(0);
         packet.extend_from_slice(&0_u16.to_be_bytes());
+        packet.push(1); // nicknameSelection = true
         packet
     }
 
@@ -593,6 +607,8 @@ mod tests {
         let ProtocolEvent::Send(login_request) = &request[0] else { panic!("expected login request") };
         assert_eq!(login_request[0], 0x04);
         assert_eq!(&login_request[1..12], b"\x0aRustPlayer");
+        assert_eq!(&login_request[12..20], b"\x07default");
+        assert_eq!(&login_request[20..], &[0, 0, 0, 28, 0, 0, 0, 0]);
 
         let mut allow = vec![0x05, 10];
         allow.extend_from_slice(b"RustPlayer");
