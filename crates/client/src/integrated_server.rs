@@ -225,12 +225,13 @@ mod tests {
         assert_eq!(first.tick_count, 1);
         assert_eq!(first.world_time, 1);
         assert_eq!(first.day_time, 1);
+        let mut autosave = false;
         for _ in 1..AUTOSAVE_INTERVAL_TICKS {
-            server.tick(player);
+            autosave = server.tick(player).autosave_due;
         }
         assert_eq!(server.tick_count(), AUTOSAVE_INTERVAL_TICKS);
         assert_eq!(server.day_time(), AUTOSAVE_INTERVAL_TICKS % 24_000);
-        assert!(server.tick(player).autosave_due);
+        assert!(autosave);
     }
 
     #[test]
