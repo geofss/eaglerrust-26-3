@@ -10,7 +10,7 @@ import init, {
 } from "./pkg/eaglerrust_client.js";
 
 const TICK_INTERVAL_MS = 50;
-const VIEW_DISTANCE = 3;
+const VIEW_DISTANCE = 1;
 let initialized = false;
 let paused = false;
 let timer = null;
