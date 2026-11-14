@@ -662,3 +662,9 @@ pub fn worker_server_loaded_sections() -> Vec<i32> {
         output
     })
 }
+
+/// Apply incremental section updates from the authoritative worker.
+#[wasm_bindgen]
+pub fn apply_singleplayer_worker_section_deltas(updates: &[i32], removed: &[i32]) -> Result<(), JsValue> {
+    render::apply_singleplayer_worker_section_deltas(updates, removed)
+}
