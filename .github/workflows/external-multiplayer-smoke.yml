@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: external-smoke-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   probe-8b4t:
     name: Probe 8b4t (Java protocol ${{ matrix.protocol }})
@@ -16,6 +20,7 @@ jobs:
     timeout-minutes: 3
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         protocol: [769, 773, 774, 777]
     steps:
