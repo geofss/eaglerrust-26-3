@@ -7,7 +7,7 @@ const timeoutMs = 25000;
 const u16 = (n) => [n >> 8 & 255, n & 255];
 const ascii = (s) => [Buffer.byteLength(s), ...Buffer.from(s, "ascii")];
 const frame = [
-  0x01, 0x02, ...u16(1), ...u16(5), ...u16(1), ...u16(777),
+  0x01, 0x02, ...u16(3), ...u16(3), ...u16(4), ...u16(5), ...u16(1), ...u16(777),
   ...ascii("EaglerRust"), ...ascii("26.3"), 0, ...ascii(username)
 ];
 
