@@ -27,6 +27,7 @@ pub mod chunk;
 pub mod chunk_codec;
 pub mod audio;
 pub mod input;
+pub mod integrated_server;
 pub mod interaction;
 pub mod inventory;
 pub mod network;
