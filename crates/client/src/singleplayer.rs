@@ -200,7 +200,7 @@ mod tests {
     fn rejects_corrupt_save_headers_and_lengths() {
         assert!(matches!(SingleplayerSave::decode(b"ER"), Err(SingleplayerSaveError::Truncated)));
         let mut bytes = SingleplayerSave {
-            seed: 1, player_position: [0.0; 3], yaw: 0.0, pitch: 0.0, game_mode: 1, world: World::new(),
+            seed: 1, player_position: [0.0; 3], yaw: 0.0, pitch: 0.0, game_mode: 1, world_time: 0, day_time: 0, world: World::new(),
         }.encode().unwrap();
         bytes[0] = b'X';
         assert!(matches!(SingleplayerSave::decode(&bytes), Err(SingleplayerSaveError::InvalidMagic)));
