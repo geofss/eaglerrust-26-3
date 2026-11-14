@@ -4,7 +4,7 @@ const endpoint = process.env.EAGLER_WS_URL || "wss://8b4t.org";
 const username = "EaglerRustCheck";
 const minecraftProtocol = Number(process.env.EAGLER_MC_PROTOCOL || "774");
 if (![769, 773, 774, 777].includes(minecraftProtocol)) throw new Error(`unsupported EAGLER_MC_PROTOCOL: ${minecraftProtocol}`);
-const timeoutMs = 25000;
+const timeoutMs = 60000;
 
 const u16 = (n) => [n >> 8 & 255, n & 255];
 const ascii = (s) => [Buffer.byteLength(s), ...Buffer.from(s, "ascii")];
@@ -48,6 +48,26 @@ function packetId(data) {
 function send(ws, bytes, label) {
   console.log(`TX ${label}: ${Buffer.from(bytes).toString("hex")}`);
   ws.send(Buffer.from(bytes));
+}
+function javaPacket(ws, id, payload, label) {
+  send(ws, [...varInt(id), ...payload], label);
+}
+function javaString(value) {
+  const bytes = Buffer.from(value, "utf8");
+  return [...varInt(bytes.length), ...bytes];
+}
+function clientInformationPayload() {
+  return [
+    ...javaString("en_us"),
+    8,             // view distance
+    ...varInt(0),  // chat mode: enabled
+    1,             // chat colors
+    0x7f,          // all skin layers
+    ...varInt(1),  // main hand: right
+    0,             // text filtering disabled (offline profile)
+    1,             // allow server listings
+    ...varInt(0)   // particle status: all
+  ];
 }
 
 const ws = new WebSocket(endpoint);
@@ -183,6 +203,8 @@ ws.addEventListener("message", (event) => {
       // The proxy sends Java Login Acknowledged to its backend internally.
       // The Eagler client must NOT send packet 0x03 here.
       stage = "configuration";
+      javaPacket(ws, 0x00, clientInformationPayload(), "Java CONFIGURATION client_information");
+      javaPacket(ws, 0x02, [...javaString("minecraft:brand"), ...javaString("EaglerRust-26.3")], "Java CONFIGURATION brand");
       return;
     }
     if (stage === "configuration") {
@@ -202,7 +224,35 @@ ws.addEventListener("message", (event) => {
       const [javaPacketId, packetIdBytes] = readVarInt(data, 0);
       const payload = data.subarray(packetIdBytes);
       console.log(`JAVA_CONFIGURATION_PACKET id=0x${javaPacketId.toString(16)} payloadBytes=${payload.length} payloadHex=${payload.toString("hex")}`);
-      finish("PASS: Eagler V5 login, profile-data, finish-login, Eagler extensions filtered, and first vanilla Java configuration packet received.");
+      if (javaPacketId === 0x02) {
+        throw new Error("server sent Configuration Disconnect: " + payload.toString("hex"));
+      }
+      if (javaPacketId === 0x04) {
+        if (payload.length !== 8) throw new Error("invalid Configuration Keep Alive length: " + payload.length);
+        javaPacket(ws, 0x04, [...payload], "Java CONFIGURATION keep_alive response");
+      } else if (javaPacketId === 0x05) {
+        if (payload.length !== 4) throw new Error("invalid Configuration Ping length: " + payload.length);
+        javaPacket(ws, 0x05, [...payload], "Java CONFIGURATION pong");
+      } else if (javaPacketId === 0x0f) {
+        // This probe advertises no locally-known packs, so its valid subset is empty.
+        javaPacket(ws, 0x07, [0], "Java CONFIGURATION select_known_packs (empty supported subset)");
+      } else if (javaPacketId === 0x03) {
+        if (payload.length !== 0) throw new Error("Finish Configuration unexpectedly had a payload");
+        javaPacket(ws, 0x03, [], "Java CONFIGURATION acknowledge_finish");
+        stage = "play";
+        console.log("CONFIGURATION_COMPLETE: acknowledged server Finish Configuration; waiting for first Play packet.");
+      }
+      return;
+    }
+    if (stage === "play") {
+      if (id === 0xee) {
+        console.log(`EAGLER_EXTENSION_PLAY bytes=${data.length} hex=${data.toString("hex")}`);
+        return;
+      }
+      const [javaPacketId, packetIdBytes] = readVarInt(data, 0);
+      const payload = data.subarray(packetIdBytes);
+      console.log(`JAVA_PLAY_PACKET id=0x${javaPacketId.toString(16)} payloadBytes=${payload.length} payloadHex=${payload.toString("hex")}`);
+      finish("PASS: Eagler V5 login, Java configuration responses, Finish Configuration acknowledgement, and first Play packet received.");
     }
   } catch (error) { fail(error); }
 });
