@@ -515,9 +515,8 @@ pub fn draw_frame() -> Result<(), JsValue> {
             renderer.tick_accumulator -= 0.05;
         }
 
-        // Mining is hold-driven in both modes. The local world applies completed
-        // breaks immediately; the reference server receives start/abort/finish and
-        // remains authoritative over multiplayer block changes.
+        // Mining is hold-driven in both modes. Local breaks are committed by the
+        // integrated server; multiplayer sends start/abort/finish to the remote server.
         let hit = current_target(renderer);
         if renderer.server_world_active {
             let raw_desired = if renderer.breaking_held {
