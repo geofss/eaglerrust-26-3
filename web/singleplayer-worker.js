@@ -7,6 +7,8 @@ import init, {
   worker_server_set_game_mode,
   worker_server_set_paused,
   worker_server_save,
+  worker_server_take_section_updates,
+  worker_server_loaded_sections,
 } from "./pkg/eaglerrust_client.js";
 
 const TICK_INTERVAL_MS = 50;
@@ -16,6 +18,22 @@ let paused = false;
 let hasPlayerState = false;
 let timer = null;
 let player = { x: 0.5, y: 80, z: 0.5, yaw: 0, pitch: 0, onGround: false };
+let knownSections = new Set();
+function sectionSet(values) {
+  const result = new Set();
+  for (let i = 0; i + 2 < values.length; i += 3) result.add([values[i], values[i + 1], values[i + 2]].join(","));
+  return result;
+}
+function publishSectionDeltas(requestId = undefined) {
+  const updates = worker_server_take_section_updates();
+  const current = sectionSet(worker_server_loaded_sections());
+  const removed = [];
+  for (const key of knownSections) {
+    if (!current.has(key)) removed.push(...key.split(",").map(Number));
+  }
+  knownSections = current;
+  if (updates.length || removed.length) send("section-deltas", { requestId, updates, removed });
+}
 
 function send(type, payload = {}, transfer = []) {
   self.postMessage({ type, ...payload }, transfer);
@@ -46,6 +64,8 @@ async function initialize(message) {
     worker_server_init(seed, VIEW_DISTANCE);
   }
   initialized = true;
+  knownSections = sectionSet(worker_server_loaded_sections());
+  worker_server_take_section_updates(); // Initial world is sent once in the ready snapshot.
   sendSnapshot("ready", message.requestId);
   timer = setInterval(runTick, TICK_INTERVAL_MS);
 }
@@ -56,21 +76,11 @@ function runTick() {
     const result = worker_server_tick(
       player.x, player.y, player.z, player.yaw, player.pitch, player.onGround,
     );
-    if (result.snapshot instanceof Uint8Array) {
-      const snapshot = result.snapshot;
-      send("world-snapshot", {
-        snapshot,
-        tickCount: result.tickCount,
-        worldTime: result.worldTime,
-        dayTime: result.dayTime,
-        autosaveDue: result.autosaveDue,
-      }, [snapshot.buffer]);
-    } else if (result.autosaveDue) {
-      send("autosave-due", {
-        tickCount: result.tickCount,
-        worldTime: result.worldTime,
-        dayTime: result.dayTime,
-      });
+    if (result.worldChanged) publishSectionDeltas();
+    if (result.autosaveDue) {
+      const snapshot = worker_server_save();
+      send("world-snapshot", { snapshot, tickCount: result.tickCount,
+        worldTime: result.worldTime, dayTime: result.dayTime, autosaveDue: true }, [snapshot.buffer]);
     }
   } catch (error) {
     fail(undefined, error);
@@ -112,8 +122,10 @@ self.addEventListener("message", async (event) => {
         const { x, y, z, state } = message;
         if (![x, y, z, state].every(Number.isInteger)) throw new Error("Invalid block edit");
         const changed = worker_server_set_block(x, y, z, state);
-        if (changed) sendSnapshot("edit-result", requestId);
-        else send("edit-result", { requestId, changed: false });
+        if (changed) {
+          publishSectionDeltas(requestId);
+          send("edit-result", { requestId, changed: true });
+        } else sendSnapshot("edit-result", requestId);
         break;
       }
       case "block-break": {
@@ -121,8 +133,10 @@ self.addEventListener("message", async (event) => {
         const { x, y, z } = message;
         if (![x, y, z].every(Number.isInteger)) throw new Error("Invalid block break");
         const changed = worker_server_break_block(x, y, z);
-        if (changed) sendSnapshot("edit-result", requestId);
-        else send("edit-result", { requestId, changed: false });
+        if (changed) {
+          publishSectionDeltas(requestId);
+          send("edit-result", { requestId, changed: true });
+        } else sendSnapshot("edit-result", requestId);
         break;
       }
       case "game-mode":
