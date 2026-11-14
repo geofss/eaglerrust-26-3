@@ -89,7 +89,22 @@ ws.addEventListener("message", (event) => {
       return;
     }
     if (stage === "allow-login") {
-      if (id === 0xff) throw new Error(`Eagler server error packet: ${data.toString("hex")}`);
+      if (id === 0xff) {
+        const code = data.length >= 2 ? data[1] : -1;
+        const size = data.length >= 4 ? data.readUInt16BE(2) : 0;
+        const reason = data.subarray(4, 4 + size).toString("utf8");
+        let detail = reason;
+        try {
+          const parsed = JSON.parse(reason);
+          const collect = (node) => {
+            if (!node || typeof node !== "object") return "";
+            return (typeof node.text === "string" ? node.text : "") +
+              (Array.isArray(node.extra) ? node.extra.map(collect).join("") : "");
+          };
+          detail = collect(parsed) || reason;
+        } catch {}
+        throw new Error(`Eagler server error 0x${code.toString(16)}: ${detail}`);
+      }
       if (id === 0x06) throw new Error(`Eagler login denied: ${data.subarray(2).toString("utf8")}`);
       if (id !== 0x05) throw new Error(`expected Eagler SERVER_ALLOW_LOGIN 0x05, got 0x${id.toString(16)}`);
       let p = 1, name;
