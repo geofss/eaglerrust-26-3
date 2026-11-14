@@ -475,10 +475,16 @@
         if (!singleplayerWorker) throw new Error("Singleplayer worker is not running");
         singleplayerWorker.postMessage(message, transfer);
       };
-      const startSingleplayerWorker = (saveBytes) => new Promise((resolve, reject) => {
+      const stopSingleplayerWorker = (reason = "Worker restarted") => {
         if (singleplayerWorker) singleplayerWorker.terminate();
+        singleplayerWorker = null;
         workerReady = false;
+        for (const pending of workerRequests.values()) pending.reject(new Error(reason));
+        workerRequests.clear();
         set_singleplayer_worker_active(false);
+      };
+      const startSingleplayerWorker = (saveBytes) => new Promise((resolve, reject) => {
+        stopSingleplayerWorker();
         singleplayerWorker = new Worker(new URL("./singleplayer-worker.js", import.meta.url), { type: "module" });
         const requestId = nextWorkerRequest();
         workerRequests.set(requestId, { resolve, reject, kind: "init" });
@@ -498,7 +504,9 @@
               apply_singleplayer_worker_snapshot(message.snapshot);
               set_singleplayer_worker_active(true);
               workerReady = true;
-              document.getElementById("singleplayer-mode").value = String(singleplayer_game_mode());
+              const currentMode = Number(document.getElementById("singleplayer-mode").value);
+              document.getElementById("singleplayer-mode").value = String(currentMode);
+              sendWorkerGameMode(currentMode);
               if (document.hidden) {
                 const pauseId = nextWorkerRequest();
                 postWorker({ type: "pause", requestId: pauseId, paused: true });
@@ -574,8 +582,10 @@
           for (const pending of workerRequests.values()) pending.reject(error);
           workerRequests.clear();
           workerReady = false;
+          if (singleplayerWorker) singleplayerWorker.terminate();
+          singleplayerWorker = null;
           set_singleplayer_worker_active(false);
-          singleplayerStatus.textContent = "Worker startup failed: " + error.message;
+          singleplayerStatus.textContent = "Worker stopped: " + error.message;
         });
         const payload = saveBytes.slice();
         singleplayerWorker.postMessage({ type: "init", requestId, save: payload }, [payload.buffer]);
@@ -591,7 +601,12 @@
         }
         const requestId = nextWorkerRequest();
         workerRequests.set(requestId, { resolve, reject, kind: "save" });
-        postWorker({ type: "save", requestId });
+        try {
+          postWorker({ type: "save", requestId });
+        } catch (error) {
+          workerRequests.delete(requestId);
+          reject(error);
+        }
       });
       const sendWorkerGameMode = (mode) => {
         if (!workerReady) return;
@@ -638,13 +653,16 @@
           singleplayerStatus.textContent = "Save failed: " + error;
         }
       });
-      // Flush the most recent server snapshot when the page is backgrounded or closed.
+      // visibilitychange requests and persists an authoritative worker save before
+      // pagehide. Never overwrite it with the renderer's potentially stale shadow copy.
       window.addEventListener("pagehide", () => {
-        try {
-          const bytes = save_singleplayer_world();
-          localStorage.setItem(saveKey, bytesToBase64(bytes));
-        } catch (_) {
-          // The page may be closing during multiplayer or before renderer startup.
+        if (!workerReady) {
+          try {
+            const bytes = save_singleplayer_world();
+            localStorage.setItem(saveKey, bytesToBase64(bytes));
+          } catch (_) {
+            // The renderer may not have started yet.
+          }
         }
       });
       document.getElementById("load-world").addEventListener("click", async () => {
