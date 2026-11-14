@@ -380,6 +380,21 @@ pub fn load_singleplayer_world(bytes: &[u8]) -> Result<(), JsValue> {
     })
 }
 
+/// Change the authoritative local server game mode.
+pub fn set_singleplayer_game_mode(mode: GameMode) -> Result<(), JsValue> {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let renderer = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        if renderer.server_world_active {
+            return Err(JsValue::from_str("Disconnect from multiplayer before changing local game mode"));
+        }
+        let server = renderer.singleplayer_server.as_mut()
+            .ok_or_else(|| JsValue::from_str("Local integrated server is not active"))?;
+        server.set_game_mode(mode);
+        Ok(())
+    })
+}
+
 /// Return true once when the local server reaches its autosave interval.
 pub fn take_singleplayer_autosave_request() -> bool {
     RENDERER.with(|slot| {
