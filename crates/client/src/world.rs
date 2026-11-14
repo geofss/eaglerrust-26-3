@@ -261,6 +261,11 @@ impl World {
     pub fn get_section(&self, position: SectionPosition) -> Option<&ChunkSection> {
         self.sections.get(&position)
     }
+
+    /// Section states for worker delta serialization.
+    pub fn section_states(&self, position: SectionPosition) -> Option<&[BlockStateId]> {
+        self.sections.get(&position).map(ChunkSection::as_slice)
+    }
 }
 
 
