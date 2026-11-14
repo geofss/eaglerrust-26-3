@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // External Eagler V5 smoke probe. Runs on a GitHub-hosted runner, not the build sandbox.
 const endpoint = process.env.EAGLER_WS_URL || "wss://8b4t.org";
-const username = "RustProbe";
+const username = "EaglerRustCheck";
 const minecraftProtocol = Number(process.env.EAGLER_MC_PROTOCOL || "774");
 if (![769, 773, 774, 777].includes(minecraftProtocol)) throw new Error(`unsupported EAGLER_MC_PROTOCOL: ${minecraftProtocol}`);
 const timeoutMs = 25000;
@@ -106,14 +106,14 @@ ws.addEventListener("message", (event) => {
         ...(nicknameSelection ? ascii(username) : ascii("")),
         ...ascii("default"),      // HandshakerInstance requests the default backend
         0,                        // empty auth password
-        0,                        // enableCookies = false
-        0,                        // cookie length
+        1,                        // enableCookies = true; no prior cookie is available
+        0,                        // cookie length = 0 (request cookie support without presenting a token)
         ...varInt(standardCaps),  // standard capability bitmask
         ...varInt(1),             // REDIRECT supports version 0 (bit 0)
         ...varInt(1),             // NOTIFICATION supports version 0 (bit 0)
         ...varInt(1),             // PAUSE_MENU supports version 0 (bit 0)
         0                         // zero extended capabilities
-      ], "EAGLER V5 CLIENT_REQUEST_LOGIN (source-matched V5 layout)");
+      ], `EAGLER V5 CLIENT_REQUEST_LOGIN (username=${username}, cookies=enabled, cookieBytes=0)`);
       return;
     }
     if (stage === "backend-allow-login") {
