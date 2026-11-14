@@ -10,6 +10,9 @@ const REFERENCE_PROTOCOL_VERSION: i32 = 775;
 /// Vanilla Java Edition 26.3 protocol baseline. This does not by itself
 /// establish Eaglercraft 26.3 WebSocket-extension compatibility.
 pub const JAVA_26_3_PROTOCOL_VERSION: i32 = 777;
+/// Minecraft 26.3 world-storage data version. This belongs in world/NBT metadata,
+/// not in the Eagler V5 transport preamble or Java network handshake.
+pub const JAVA_26_3_DATA_VERSION: i32 = 5023;
 const MAX_HOST_BYTES: usize = 255;
 const MAX_USERNAME_BYTES: usize = 16;
 
@@ -558,6 +561,9 @@ mod tests {
         assert_eq!(&frames[0][4..6], &5_u16.to_be_bytes());
         assert_eq!(&frames[0][6..8], &1_u16.to_be_bytes());
         assert_eq!(&frames[0][8..10], &777_u16.to_be_bytes());
+        // Data version 5023 is storage metadata, not an initialization field.
+        assert_eq!(JAVA_26_3_DATA_VERSION, 5023);
+        assert!(!frames[0].windows(4).any(|bytes| bytes == JAVA_26_3_DATA_VERSION.to_be_bytes()));
     }
 
     #[test]
