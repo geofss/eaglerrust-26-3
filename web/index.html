@@ -468,6 +468,7 @@
       // Typed IPC boundary: the worker owns simulation; this thread owns rendering/input.
       let singleplayerWorker = null;
       let workerReady = false;
+      let workerHasOwnedWorld = false;
       let workerRequestId = 0;
       const workerRequests = new Map();
       const nextWorkerRequest = () => ++workerRequestId;
@@ -479,6 +480,7 @@
         if (singleplayerWorker) singleplayerWorker.terminate();
         singleplayerWorker = null;
         workerReady = false;
+        workerHasOwnedWorld = false;
         for (const pending of workerRequests.values()) pending.reject(new Error(reason));
         workerRequests.clear();
         set_singleplayer_worker_active(false);
@@ -504,6 +506,7 @@
               apply_singleplayer_worker_snapshot(message.snapshot);
               set_singleplayer_worker_active(true);
               workerReady = true;
+              workerHasOwnedWorld = true;
               const currentMode = Number(document.getElementById("singleplayer-mode").value);
               document.getElementById("singleplayer-mode").value = String(currentMode);
               sendWorkerGameMode(currentMode);
@@ -657,7 +660,7 @@
       // visibilitychange requests and persists an authoritative worker save before
       // pagehide. Never overwrite it with the renderer's potentially stale shadow copy.
       window.addEventListener("pagehide", () => {
-        if (!workerReady) {
+        if (!workerHasOwnedWorld) {
           try {
             const bytes = save_singleplayer_world();
             localStorage.setItem(saveKey, bytesToBase64(bytes));
