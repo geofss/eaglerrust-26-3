@@ -524,8 +524,8 @@ pub fn worker_server_load(bytes: &[u8], view_distance: i32) -> Result<(), JsValu
     })
 }
 
-/// Advance one authoritative 20 TPS tick. A complete snapshot is attached only
-/// when chunk streaming changes the world or the server reaches its autosave tick.
+/// Advance one authoritative 20 TPS tick. World mutations are sent separately
+/// through dirty-section deltas; this call returns clock and streaming metadata.
 #[wasm_bindgen]
 pub fn worker_server_tick(
     x: f64, y: f64, z: f64, yaw: f32, pitch: f32, on_ground: bool,
