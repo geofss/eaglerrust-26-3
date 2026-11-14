@@ -343,6 +343,12 @@ pub fn set_singleplayer_game_mode(mode: u8) -> Result<(), JsValue> {
     render::set_singleplayer_game_mode(mode)
 }
 
+/// Return the current local singleplayer game mode.
+#[wasm_bindgen]
+pub fn singleplayer_game_mode() -> Result<u8, JsValue> {
+    render::singleplayer_game_mode()
+}
+
 /// Return and clear the local server's 30-second autosave request.
 #[wasm_bindgen]
 pub fn take_singleplayer_autosave_request() -> bool {
