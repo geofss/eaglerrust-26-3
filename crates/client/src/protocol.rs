@@ -772,6 +772,7 @@ mod tests {
         let mut allow = vec![0x05, 10];
         allow.extend_from_slice(b"RustPlayer");
         allow.extend_from_slice(&[0x11; 16]);
+        allow.extend_from_slice(&[28, 0, 0, 0, 0]); // caps mask, 3 versions, no extended caps
         session.process_server_message(&allow).unwrap();
         session.process_server_message(&[0x09]).unwrap();
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
