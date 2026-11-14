@@ -359,9 +359,9 @@ impl EaglerV5Session {
                 request.push(0); // cookie length
                 // V5 standard caps: REDIRECT (2), NOTIFICATION (3), PAUSE_MENU (4).
                 write_varint(&mut request, (1 << 2) | (1 << 3) | (1 << 4));
-                write_varint(&mut request, 0); // REDIRECT capability version bitset
-                write_varint(&mut request, 0); // NOTIFICATION capability version bitset
-                write_varint(&mut request, 0); // PAUSE_MENU capability version bitset
+                write_varint(&mut request, 1); // REDIRECT supports version 0 (bit 0)
+                write_varint(&mut request, 1); // NOTIFICATION supports version 0 (bit 0)
+                write_varint(&mut request, 1); // PAUSE_MENU supports version 0 (bit 0)
                 request.push(0); // zero extended capabilities
                 events.push(ProtocolEvent::Send(request));
                 self.stage = EaglerLoginStage::AwaitAllowLogin;
@@ -651,7 +651,7 @@ mod tests {
         assert_eq!(login_request[0], 0x04);
         assert_eq!(&login_request[1..12], b"\x0aRustPlayer");
         assert_eq!(&login_request[12..20], b"\x07default");
-        assert_eq!(&login_request[20..], &[0, 0, 0, 28, 0, 0, 0, 0]);
+        assert_eq!(&login_request[20..], &[0, 0, 0, 28, 1, 1, 1, 0]);
 
         let mut allow = vec![0x05, 10];
         allow.extend_from_slice(b"RustPlayer");
