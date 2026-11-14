@@ -31,7 +31,7 @@ mod browser {
 
     use js_sys::{Array, ArrayBuffer, Uint8Array};
     use wasm_bindgen::{closure::Closure, JsCast, JsValue};
-    use web_sys::{BinaryType, Event, MessageEvent, WebSocket};
+    use web_sys::{BinaryType, CloseEvent, Event, MessageEvent, WebSocket};
 
     use super::ConnectionState;
     use crate::protocol::{EaglerV5Session, ProtocolEvent};
@@ -67,10 +67,16 @@ mod browser {
             let offered = if subprotocol.is_empty() { Vec::new() } else { vec![subprotocol] };
             let transport = BrowserWebSocket::connect_with_subprotocols(url, &offered)?;
             let mut protocol = EaglerV5Session::new();
-            let pending_outbound = protocol
+            let mut initial_messages = protocol
                 .begin_login(host, port, username, uuid)
-                .map_err(|error| JsValue::from_str(&format!("protocol setup failed: {error:?}")))?
-                .into();
+                .map_err(|error| JsValue::from_str(&format!("protocol setup failed: {error:?}")))?;
+            if initial_messages.is_empty() {
+                return Err(JsValue::from_str("Eagler V5 did not produce an initial handshake frame"));
+            }
+            // The V5 01 02 frame is sent by the WebSocket onopen callback itself,
+            // not delayed until the next renderer/network tick.
+            transport.queue_initial_message(initial_messages.remove(0))?;
+            let pending_outbound = initial_messages.into();
             Ok(Self { transport, protocol, pending_outbound })
         }
 
@@ -109,6 +115,7 @@ mod browser {
             self.flush_outbound()?;
             let mut delivered = Vec::new();
             while let Some(message) = self.transport.try_receive() {
+                log_protocol_message("RX", self.protocol.state(), &message);
                 let events = self.protocol.process_server_message(&message)
                     .map_err(|error| JsValue::from_str(&format!("protocol packet rejected: {error:?}")))?;
                 for event in events {
@@ -127,6 +134,7 @@ mod browser {
                 return Ok(());
             }
             while let Some(message) = self.pending_outbound.pop_front() {
+                log_protocol_message("TX", self.protocol.state(), &message);
                 if let Err(error) = self.transport.send_binary(&message) {
                     self.pending_outbound.push_front(message);
                     return Err(error);
@@ -134,6 +142,20 @@ mod browser {
             }
             Ok(())
         }
+    }
+
+    fn log_protocol_message(direction: &str, state: crate::protocol::ProtocolState, bytes: &[u8]) {
+        let detail = if state == crate::protocol::ProtocolState::Login {
+            bytes.first().map(|id| format!("Eagler packet 0x{id:02X}"))
+                .unwrap_or_else(|| "empty Eagler packet".to_owned())
+        } else {
+            crate::protocol::decode_ws_packet(bytes)
+                .map(|(id, payload)| format!("Minecraft packet id={id} payload={}B", payload.len()))
+                .unwrap_or_else(|error| format!("unparsed packet ({error:?})"))
+        };
+        web_sys::console::log_1(&JsValue::from_str(&format!(
+            "[EaglerRust] {direction} state={state:?} bytes={} {detail}", bytes.len()
+        )));
     }
 
     const MAX_QUEUED_MESSAGES: usize = 1024;
@@ -147,6 +169,7 @@ mod browser {
         transport_error: bool,
         negotiated_protocol: String,
         negotiated_extensions: String,
+        initial_outbound: Option<Vec<u8>>,
     }
 
     /// Browser-owned binary WebSocket connection.
@@ -195,12 +218,35 @@ mod browser {
             let open_state = Rc::clone(&shared);
             let open_socket = socket.clone();
             let on_open = Closure::wrap(Box::new(move |_event: Event| {
-                let mut state = open_state.borrow_mut();
-                if state.state == ConnectionState::Connecting {
-                    state.state = ConnectionState::Connected;
-                    // These properties are authoritative only after the open event.
-                    state.negotiated_protocol = open_socket.protocol();
-                    state.negotiated_extensions = open_socket.extensions();
+                let initial_message = {
+                    let mut state = open_state.borrow_mut();
+                    if state.state == ConnectionState::Connecting {
+                        state.state = ConnectionState::Connected;
+                        // These properties are authoritative only after the open event.
+                        state.negotiated_protocol = open_socket.protocol();
+                        state.negotiated_extensions = open_socket.extensions();
+                    }
+                    state.initial_outbound.take()
+                };
+                web_sys::console::log_1(&JsValue::from_str(&format!(
+                    "[EaglerRust] WebSocket onopen protocol='{}' extensions='{}'",
+                    open_socket.protocol(), open_socket.extensions()
+                )));
+                if let Some(bytes) = initial_message {
+                    match open_socket.send_with_u8_array(&bytes) {
+                        Ok(()) => web_sys::console::log_1(&JsValue::from_str(&format!(
+                            "[EaglerRust] TX V5 preamble immediately onopen: {:02X} {:02X} ({} bytes)",
+                            bytes.get(0).copied().unwrap_or(0), bytes.get(1).copied().unwrap_or(0), bytes.len()
+                        ))),
+                        Err(error) => {
+                            let mut state = open_state.borrow_mut();
+                            state.transport_error = true;
+                            state.state = ConnectionState::Failed;
+                            web_sys::console::log_1(&JsValue::from_str(&format!(
+                                "[EaglerRust] WebSocket initial V5 send failed: {error:?}"
+                            )));
+                        }
+                    }
                 }
             }) as Box<dyn FnMut(Event)>);
             socket.set_onopen(Some(on_open.as_ref().unchecked_ref()));
@@ -216,6 +262,10 @@ mod browser {
                 };
 
                 let bytes = Uint8Array::new(&buffer).to_vec();
+                let preview = bytes.iter().take(8).map(|byte| format!("{byte:02X}")).collect::<Vec<_>>().join(" ");
+                web_sys::console::log_1(&JsValue::from_str(&format!(
+                    "[EaglerRust] WebSocket onmessage binary={}B [{}]", bytes.len(), preview
+                )));
                 let mut state = message_state.borrow_mut();
                 if state.state == ConnectionState::Failed {
                     return;
@@ -236,6 +286,9 @@ mod browser {
 
             let error_state = Rc::clone(&shared);
             let on_error = Closure::wrap(Box::new(move |_event: Event| {
+                web_sys::console::log_1(&JsValue::from_str(
+                    "[EaglerRust] WebSocket onerror (browser does not expose detailed error reason)"
+                ));
                 let mut state = error_state.borrow_mut();
                 state.transport_error = true;
                 state.state = ConnectionState::Failed;
@@ -243,12 +296,16 @@ mod browser {
             socket.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
             let close_state = Rc::clone(&shared);
-            let on_close = Closure::wrap(Box::new(move |_event: Event| {
+            let on_close = Closure::wrap(Box::new(move |event: CloseEvent| {
+                web_sys::console::log_1(&JsValue::from_str(&format!(
+                    "[EaglerRust] WebSocket onclose code={} clean={} reason='{}'",
+                    event.code(), event.was_clean(), event.reason()
+                )));
                 let mut state = close_state.borrow_mut();
                 if state.state != ConnectionState::Failed {
                     state.state = ConnectionState::Disconnected;
                 }
-            }) as Box<dyn FnMut(Event)>);
+            }) as Box<dyn FnMut(CloseEvent)>);
             socket.set_onclose(Some(on_close.as_ref().unchecked_ref()));
 
             Ok(Self {
@@ -259,6 +316,25 @@ mod browser {
                 on_error,
                 on_close,
             })
+        }
+
+        /// Arrange for the V5 preamble to be sent inside onopen, before the next game tick.
+        pub fn queue_initial_message(&self, bytes: Vec<u8>) -> Result<(), JsValue> {
+            let mut state = self.shared.borrow_mut();
+            if state.initial_outbound.is_some() {
+                return Err(JsValue::from_str("An initial WebSocket message is already queued"));
+            }
+            match state.state {
+                ConnectionState::Connecting => {
+                    state.initial_outbound = Some(bytes);
+                    Ok(())
+                }
+                ConnectionState::Connected => {
+                    drop(state);
+                    self.send_binary(&bytes)
+                }
+                _ => Err(JsValue::from_str("WebSocket is not available for the initial message")),
+            }
         }
 
         pub fn state(&self) -> ConnectionState {
