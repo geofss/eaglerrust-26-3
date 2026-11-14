@@ -118,8 +118,8 @@ impl IntegratedServer {
                 on_ground: false,
             },
             tick_count: 0,
-            world_time: 0,
-            day_time: 0,
+            world_time: save.world_time,
+            day_time: save.day_time % 24_000,
             paused: false,
         }
     }
@@ -204,6 +204,8 @@ impl IntegratedServer {
             yaw: self.player.yaw,
             pitch: self.player.pitch,
             game_mode: self.game_mode.as_u8(),
+            world_time: self.world_time,
+            day_time: self.day_time,
             world: self.world.clone(),
         }
     }
@@ -275,5 +277,7 @@ mod tests {
         assert_eq!(restored.player_position, player.position);
         assert_eq!(restored.yaw, player.yaw);
         assert_eq!(restored.game_mode, GameMode::Creative.as_u8());
+        assert_eq!(restored.world_time, server.world_time());
+        assert_eq!(restored.day_time, server.day_time());
     }
 }
