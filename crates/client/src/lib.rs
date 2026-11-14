@@ -10,6 +10,12 @@ thread_local! {
     static LAST_SENT_PLAYER_STATE: RefCell<Option<render::PlayerNetworkState>> = const { RefCell::new(None) };
 }
 
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    /// This state exists only inside the dedicated singleplayer worker WASM instance.
+    static WORKER_SERVER: RefCell<Option<integrated_server::IntegratedServer>> = const { RefCell::new(None) };
+}
+
 thread_local! {
     static BROWSER_HOTBAR: RefCell<Hotbar> = RefCell::new({
         let mut hotbar = Hotbar::default();
@@ -495,4 +501,110 @@ mod movement_rotation_tests {
         assert!((yaw - 270.0).abs() < 1.0e-4);
         assert!((pitch + 45.0).abs() < 1.0e-4);
     }
+}
+
+
+/// Create the authoritative integrated server inside the calling WASM instance.
+/// The browser worker imports this same module in its own isolated instance.
+#[wasm_bindgen]
+pub fn worker_server_init(seed: u32, view_distance: i32) -> Result<(), JsValue> {
+    WORKER_SERVER.with(|slot| {
+        *slot.borrow_mut() = Some(integrated_server::IntegratedServer::new(seed, view_distance));
+        Ok(())
+    })
+}
+
+/// Restore a project save into the worker-owned integrated server.
+#[wasm_bindgen]
+pub fn worker_server_load(bytes: &[u8], view_distance: i32) -> Result<(), JsValue> {
+    let save = singleplayer::SingleplayerSave::decode(bytes)
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    WORKER_SERVER.with(|slot| {
+        *slot.borrow_mut() = Some(integrated_server::IntegratedServer::from_save(save, view_distance));
+        Ok(())
+    })
+}
+
+/// Advance one authoritative 20 TPS tick. A complete snapshot is attached only
+/// when chunk streaming changes the world or the server reaches its autosave tick.
+#[wasm_bindgen]
+pub fn worker_server_tick(
+    x: f64, y: f64, z: f64, yaw: f32, pitch: f32, on_ground: bool,
+) -> Result<JsValue, JsValue> {
+    WORKER_SERVER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let server = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Worker server is not initialized"))?;
+        let player = integrated_server::ServerPlayerState {
+            position: [x, y, z], yaw, pitch, on_ground,
+        };
+        let tick = server.tick(player);
+        let result = js_sys::Object::new();
+        js_sys::Reflect::set(&result, &JsValue::from_str("tickCount"), &JsValue::from_f64(tick.tick_count as f64))?;
+        js_sys::Reflect::set(&result, &JsValue::from_str("worldTime"), &JsValue::from_f64(tick.world_time as f64))?;
+        js_sys::Reflect::set(&result, &JsValue::from_str("dayTime"), &JsValue::from_f64(tick.day_time as f64))?;
+        js_sys::Reflect::set(&result, &JsValue::from_str("autosaveDue"), &JsValue::from_bool(tick.autosave_due))?;
+        let world_changed = tick.chunk_update.loaded_columns > 0 || tick.chunk_update.unloaded_columns > 0;
+        js_sys::Reflect::set(&result, &JsValue::from_str("worldChanged"), &JsValue::from_bool(world_changed))?;
+        if world_changed || tick.autosave_due {
+            let snapshot = server.encode_save().map_err(|error| JsValue::from_str(&error.to_string()))?;
+            let bytes = js_sys::Uint8Array::from(snapshot.as_slice());
+            js_sys::Reflect::set(&result, &JsValue::from_str("snapshot"), &bytes)?;
+        }
+        Ok(result.into())
+    })
+}
+
+/// Apply a validated block edit to the worker-owned world.
+#[wasm_bindgen]
+pub fn worker_server_set_block(x: i32, y: i32, z: i32, state: u32) -> Result<bool, JsValue> {
+    WORKER_SERVER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let server = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Worker server is not initialized"))?;
+        server.set_block(world::BlockPosition::new(x, y, z), world::BlockStateId(state))
+            .map_err(|error| JsValue::from_str(&format!("Block edit rejected: {error:?}")))
+    })
+}
+
+/// Break a block on the worker-owned world.
+#[wasm_bindgen]
+pub fn worker_server_break_block(x: i32, y: i32, z: i32) -> Result<bool, JsValue> {
+    WORKER_SERVER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let server = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Worker server is not initialized"))?;
+        server.break_block(world::BlockPosition::new(x, y, z))
+            .map_err(|error| JsValue::from_str(&format!("Block break rejected: {error:?}")))
+    })
+}
+
+/// Update the worker-owned game mode.
+#[wasm_bindgen]
+pub fn worker_server_set_game_mode(mode: u8) -> Result<(), JsValue> {
+    if mode > 3 { return Err(JsValue::from_str("Invalid game mode")); }
+    WORKER_SERVER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let server = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Worker server is not initialized"))?;
+        server.set_game_mode(integrated_server::GameMode::from_u8(mode));
+        Ok(())
+    })
+}
+
+/// Pause or resume simulation ticks in the worker.
+#[wasm_bindgen]
+pub fn worker_server_set_paused(paused: bool) -> Result<(), JsValue> {
+    WORKER_SERVER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let server = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Worker server is not initialized"))?;
+        server.set_paused(paused);
+        Ok(())
+    })
+}
+
+/// Serialize the worker-owned world for explicit saves and page shutdown.
+#[wasm_bindgen]
+pub fn worker_server_save() -> Result<Vec<u8>, JsValue> {
+    WORKER_SERVER.with(|slot| {
+        let borrowed = slot.borrow();
+        let server = borrowed.as_ref().ok_or_else(|| JsValue::from_str("Worker server is not initialized"))?;
+        server.encode_save().map_err(|error| JsValue::from_str(&error.to_string()))
+    })
 }
