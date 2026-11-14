@@ -10,6 +10,7 @@ use crate::atlas::{prototype_atlas_pixels, AtlasRect, TextureAtlasLayout, PROTOT
 use crate::chunk::ChunkManager;
 use crate::input::InputFrame;
 use crate::interaction::{break_block, place_block, target_block, MiningController, MiningUpdate};
+use crate::integrated_server::{GameMode, IntegratedServer, ServerPlayerState};
 use crate::physics::Vec3;
 use crate::player::Player;
 use crate::world::{BlockPosition, BlockStateId, ChunkPosition, SectionPosition, TerrainGenerator, World};
@@ -50,6 +51,8 @@ struct Renderer {
     world: World,
     chunk_manager: ChunkManager,
     world_seed: u32,
+    singleplayer_server: Option<IntegratedServer>,
+    autosave_due: bool,
     player: Player,
     camera_yaw: f32,
     camera_pitch: f32,
@@ -141,14 +144,14 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
         .ok_or_else(|| JsValue::from_str("Texture atlas sampler is missing"))?;
 
     let world_seed = 0xEA61_2026;
-    let generator = TerrainGenerator::new(world_seed, 5, 3);
-    let mut world = World::new();
-    let mut chunk_manager = ChunkManager::new(1);
-    chunk_manager.update(&mut world, BlockPosition::new(0, 0, 0).chunk(), &generator);
+    let singleplayer_server = IntegratedServer::new(world_seed, 1);
+    let world = singleplayer_server.world().clone();
+    let chunk_manager = singleplayer_server.chunks().clone();
+    let server_player = singleplayer_server.player();
     let section_meshes = build_section_gpu_meshes(&gl, &world, atlas_layout)?;
-    world.take_dirty_sections();
-    let spawn_height = generator.height_at(0, 0).max(1) as f64 + 1.01;
-    let player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
+    let player = Player::new(Vec3::new(
+        server_player.position[0], server_player.position[1], server_player.position[2],
+    ));
     gl.use_program(Some(&program));
     let position = gl.get_attrib_location(&program, "a_position");
     let color = gl.get_attrib_location(&program, "a_color");
@@ -188,6 +191,8 @@ pub fn start_renderer(canvas_id: &str) -> Result<(), JsValue> {
             world,
             chunk_manager,
             world_seed,
+            singleplayer_server: Some(singleplayer_server),
+            autosave_due: false,
             player,
             camera_yaw: 0.0,
             camera_pitch: -0.34,
@@ -256,8 +261,20 @@ pub fn disconnect_reference_world() {
                 renderer.gl.delete_buffer(Some(&mesh.buffer));
             }
             let radius = renderer.chunk_manager.radius();
-            renderer.world = World::new();
-            renderer.chunk_manager = ChunkManager::new(radius);
+            let server = IntegratedServer::new(renderer.world_seed, radius);
+            renderer.world = server.world().clone();
+            renderer.chunk_manager = server.chunks().clone();
+            if let Ok(meshes) = build_section_gpu_meshes(&renderer.gl, &renderer.world, renderer.atlas_layout) {
+                for (_, mesh) in renderer.section_meshes.drain() {
+                    renderer.gl.delete_buffer(Some(&mesh.buffer));
+                }
+                renderer.section_meshes = meshes;
+            }
+            renderer.player = Player::new(Vec3::new(
+                server.player().position[0], server.player().position[1], server.player().position[2],
+            ));
+            renderer.singleplayer_server = Some(server);
+            renderer.autosave_due = false;
             renderer.server_world_active = false;
             renderer.breaking_held = false;
             renderer.mining.reset();
@@ -276,21 +293,24 @@ pub fn create_singleplayer_world(seed: u32) -> Result<(), JsValue> {
         if renderer.server_world_active {
             return Err(JsValue::from_str("Disconnect from the server before creating a local world"));
         }
-        let generator = TerrainGenerator::new(seed, 5, 3);
-        let mut world = World::new();
-        let mut chunk_manager = ChunkManager::new(renderer.chunk_manager.radius());
-        chunk_manager.update(&mut world, ChunkPosition::new(0, 0), &generator);
+        let server = IntegratedServer::new(seed, renderer.chunk_manager.radius());
+        let world = server.world().clone();
+        let chunk_manager = server.chunks().clone();
         let meshes = build_section_gpu_meshes(&renderer.gl, &world, renderer.atlas_layout)?;
         for (_, mesh) in renderer.section_meshes.drain() {
             renderer.gl.delete_buffer(Some(&mesh.buffer));
         }
         world.take_dirty_sections();
-        let spawn_height = generator.height_at(0, 0).max(1) as f64 + 1.01;
+        let spawn = server.player();
         renderer.world = world;
         renderer.chunk_manager = chunk_manager;
         renderer.world_seed = seed;
+        renderer.singleplayer_server = Some(server);
+        renderer.autosave_due = false;
         renderer.section_meshes = meshes;
-        renderer.player = Player::new(Vec3::new(0.5, spawn_height, 0.5));
+        renderer.player = Player::new(Vec3::new(
+            spawn.position[0], spawn.position[1], spawn.position[2],
+        ));
         renderer.camera_yaw = 0.0;
         renderer.camera_pitch = -0.34;
         renderer.pressed_keys.clear();
@@ -313,18 +333,9 @@ pub fn save_singleplayer_world() -> Result<Vec<u8>, JsValue> {
         if renderer.server_world_active {
             return Err(JsValue::from_str("Multiplayer worlds cannot be saved as singleplayer worlds"));
         }
-        let save = crate::singleplayer::SingleplayerSave {
-            seed: renderer.world_seed,
-            player_position: [
-                renderer.player.position.x,
-                renderer.player.position.y,
-                renderer.player.position.z,
-            ],
-            yaw: renderer.camera_yaw,
-            pitch: renderer.camera_pitch,
-            world: renderer.world.clone(),
-        };
-        save.encode().map_err(|error| JsValue::from_str(&error.to_string()))
+        let server = renderer.singleplayer_server.as_ref()
+            .ok_or_else(|| JsValue::from_str("Local integrated server is not active"))?;
+        server.encode_save().map_err(|error| JsValue::from_str(&error.to_string()))
     })
 }
 
@@ -338,23 +349,24 @@ pub fn load_singleplayer_world(bytes: &[u8]) -> Result<(), JsValue> {
         if renderer.server_world_active {
             return Err(JsValue::from_str("Disconnect from the server before loading a local save"));
         }
-        let meshes = build_section_gpu_meshes(&renderer.gl, &save.world, renderer.atlas_layout)?;
+        let server = IntegratedServer::from_save(save, renderer.chunk_manager.radius());
+        let world = server.world().clone();
+        let meshes = build_section_gpu_meshes(&renderer.gl, &world, renderer.atlas_layout)?;
         for (_, mesh) in renderer.section_meshes.drain() {
             renderer.gl.delete_buffer(Some(&mesh.buffer));
         }
-        let mut world = save.world;
-        world.take_dirty_sections();
-        let mut chunk_manager = ChunkManager::new(renderer.chunk_manager.radius());
-        chunk_manager.adopt_loaded_world(&world);
         renderer.world = world;
-        renderer.chunk_manager = chunk_manager;
-        renderer.world_seed = save.seed;
+        renderer.chunk_manager = server.chunks().clone();
+        renderer.world_seed = server.seed();
+        let saved_player = server.player();
+        renderer.singleplayer_server = Some(server);
+        renderer.autosave_due = false;
         renderer.section_meshes = meshes;
         renderer.player = Player::new(Vec3::new(
-            save.player_position[0], save.player_position[1], save.player_position[2],
+            saved_player.position[0], saved_player.position[1], saved_player.position[2],
         ));
-        renderer.camera_yaw = save.yaw;
-        renderer.camera_pitch = save.pitch.clamp(-1.45, 1.45);
+        renderer.camera_yaw = saved_player.yaw;
+        renderer.camera_pitch = saved_player.pitch.clamp(-1.45, 1.45);
         renderer.player.yaw = f64::from(renderer.camera_yaw);
         renderer.pressed_keys.clear();
         renderer.tick_accumulator = 0.0;
@@ -365,6 +377,17 @@ pub fn load_singleplayer_world(bytes: &[u8]) -> Result<(), JsValue> {
         renderer.completed_dig = None;
         renderer.pending_dig_actions.clear();
         Ok(())
+    })
+}
+
+/// Return true once when the local server reaches its autosave interval.
+pub fn take_singleplayer_autosave_request() -> bool {
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let Some(renderer) = borrowed.as_mut() else { return false; };
+        let requested = renderer.autosave_due;
+        renderer.autosave_due = false;
+        requested && !renderer.server_world_active
     })
 }
 
@@ -432,15 +455,32 @@ pub fn draw_frame() -> Result<(), JsValue> {
                 renderer.player.position.z.floor() as i32,
             ).chunk();
             if !renderer.server_world_active {
-                let chunk_update = renderer.chunk_manager.update_with_budget(
-                    &mut renderer.world,
-                    center_chunk,
-                    &TerrainGenerator::new(renderer.world_seed, 5, 3),
-                    1,
-                    1,
-                );
-                if chunk_update.loaded_columns > 0 || chunk_update.unloaded_columns > 0 {
-                    update_dirty_section_meshes(renderer);
+                let server_player = ServerPlayerState {
+                    position: [
+                        renderer.player.position.x,
+                        renderer.player.position.y,
+                        renderer.player.position.z,
+                    ],
+                    yaw: renderer.camera_yaw,
+                    pitch: renderer.camera_pitch,
+                    on_ground: renderer.player.on_ground,
+                };
+                if let Some(server) = renderer.singleplayer_server.as_mut() {
+                    let tick = server.tick(server_player);
+                    renderer.autosave_due |= tick.autosave_due;
+                    if tick.chunk_update.loaded_columns > 0 || tick.chunk_update.unloaded_columns > 0 {
+                        renderer.world = server.world().clone();
+                        renderer.chunk_manager = server.chunks().clone();
+                        update_dirty_section_meshes(renderer);
+                    }
+                } else {
+                    let chunk_update = renderer.chunk_manager.update_with_budget(
+                        &mut renderer.world, center_chunk,
+                        &TerrainGenerator::new(renderer.world_seed, 5, 3), 1, 1,
+                    );
+                    if chunk_update.loaded_columns > 0 || chunk_update.unloaded_columns > 0 {
+                        update_dirty_section_meshes(renderer);
+                    }
                 }
             }
             renderer.tick_accumulator -= 0.05;
@@ -487,7 +527,13 @@ pub fn draw_frame() -> Result<(), JsValue> {
             if let MiningUpdate::Completed { position, .. } =
                 renderer.mining.tick(hit, renderer.breaking_held, elapsed as f32)
             {
-                if renderer.world.set_block(position, crate::world::AIR) {
+                let changed = if let Some(server) = renderer.singleplayer_server.as_mut() {
+                    matches!(server.break_block(position), Ok(true))
+                } else {
+                    renderer.world.set_block(position, crate::world::AIR)
+                };
+                if changed {
+                    renderer.world.set_block(position, crate::world::AIR);
                     update_dirty_section_meshes(renderer);
                 }
             }
@@ -753,7 +799,15 @@ pub fn break_target() -> bool {
         let mut borrowed = slot.borrow_mut();
         let Some(renderer) = borrowed.as_mut() else { return false; };
         let Some(hit) = current_target(renderer) else { return false; };
-        if !break_block(&mut renderer.world, hit) { return false; }
+        let changed = if renderer.server_world_active {
+            break_block(&mut renderer.world, hit)
+        } else if let Some(server) = renderer.singleplayer_server.as_mut() {
+            matches!(server.break_block(hit.position), Ok(true))
+        } else {
+            break_block(&mut renderer.world, hit)
+        };
+        if !changed { return false; }
+        renderer.world.set_block(hit.position, crate::world::AIR);
         update_dirty_section_meshes(renderer)
     })
 }
@@ -764,7 +818,19 @@ pub fn place_target(state: u32) -> bool {
         let mut borrowed = slot.borrow_mut();
         let Some(renderer) = borrowed.as_mut() else { return false; };
         let Some(hit) = current_target(renderer) else { return false; };
-        if !place_block(&mut renderer.world, hit, BlockStateId(state)) { return false; }
+        let target = hit.position;
+        let destination = BlockPosition::new(
+            target.x + hit.face[0], target.y + hit.face[1], target.z + hit.face[2],
+        );
+        let changed = if renderer.server_world_active {
+            place_block(&mut renderer.world, hit, BlockStateId(state))
+        } else if let Some(server) = renderer.singleplayer_server.as_mut() {
+            matches!(server.set_block(destination, BlockStateId(state)), Ok(true))
+        } else {
+            place_block(&mut renderer.world, hit, BlockStateId(state))
+        };
+        if !changed { return false; }
+        renderer.world.set_block(destination, BlockStateId(state));
         update_dirty_section_meshes(renderer)
     })
 }
