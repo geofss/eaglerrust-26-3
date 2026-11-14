@@ -76,7 +76,16 @@ ws.addEventListener("message", (event) => {
       console.log(`SERVER_VERSION eagler=${eagler} java=${java} brand='${brand}' version='${version}' auth=${auth} saltBytes=${saltLen}`);
       if (eagler !== 5 || java !== 777) throw new Error(`incompatible protocol: expected Eagler 5 / Java 777, got ${eagler} / ${java}`);
       stage = "allow-login";
-      send(ws, [0x04, ...ascii(username), ...ascii(""), ...ascii("")], "EAGLERCRAFT CLIENT_REQUEST_LOGIN (username, requested server, auth password)");
+      send(ws, [
+        0x04,
+        ...ascii(username),       // username
+        ...ascii(""),             // requested backend (default)
+        0,                        // empty auth password
+        0,                        // no cookie offered
+        0,                        // zero cookie bytes
+        0,                        // no optional capabilities (VarInt 0)
+        0                         // no extended capabilities
+      ], "EAGLER V5 CLIENT_REQUEST_LOGIN (full client-side request fields)");
       return;
     }
     if (stage === "allow-login") {
