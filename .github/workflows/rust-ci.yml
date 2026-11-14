@@ -28,3 +28,16 @@ jobs:
       - name: Build browser package
         working-directory: crates/client
         run: wasm-pack build --target web --release --out-dir ../../web/pkg
+
+      - name: Validate browser worker and page module syntax
+        run: |
+          node --check web/singleplayer-worker.js
+          python - <<'PY'
+          from pathlib import Path
+          html = Path("web/index.html").read_text()
+          marker = '<script type="module">'
+          start = html.index(marker) + len(marker)
+          end = html.index("</script>", start)
+          Path("/tmp/eaglerrust-page.mjs").write_text(html[start:end])
+          PY
+          node --check /tmp/eaglerrust-page.mjs
