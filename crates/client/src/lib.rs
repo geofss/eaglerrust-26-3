@@ -10,7 +10,6 @@ thread_local! {
     static LAST_SENT_PLAYER_STATE: RefCell<Option<render::PlayerNetworkState>> = const { RefCell::new(None) };
 }
 
-#[cfg(target_arch = "wasm32")]
 thread_local! {
     /// This state exists only inside the dedicated singleplayer worker WASM instance.
     static WORKER_SERVER: RefCell<Option<integrated_server::IntegratedServer>> = const { RefCell::new(None) };
