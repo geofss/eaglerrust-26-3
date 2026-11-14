@@ -498,6 +498,11 @@
               set_singleplayer_worker_active(true);
               workerReady = true;
               document.getElementById("singleplayer-mode").value = String(singleplayer_game_mode());
+              if (document.hidden) {
+                const pauseId = nextWorkerRequest();
+                postWorker({ type: "pause", requestId: pauseId, paused: true });
+                requestWorkerSave().catch(() => {});
+              }
               singleplayerStatus.textContent = "Dedicated Rust/WASM server worker ready";
               if (pending) {
                 workerRequests.delete(message.requestId);
@@ -770,6 +775,7 @@
         if (workerReady) {
           const requestId = nextWorkerRequest();
           postWorker({ type: "pause", requestId, paused: document.hidden });
+          if (document.hidden) requestWorkerSave().catch(() => {});
         }
       });
 
