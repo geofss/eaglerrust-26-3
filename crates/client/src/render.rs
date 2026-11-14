@@ -13,7 +13,7 @@ use crate::interaction::{break_block, place_block, target_block, MiningControlle
 use crate::integrated_server::{GameMode, IntegratedServer, ServerPlayerState};
 use crate::physics::Vec3;
 use crate::player::Player;
-use crate::world::{BlockPosition, BlockStateId, ChunkPosition, SectionPosition, TerrainGenerator, World};
+use crate::world::{BlockPosition, BlockStateId, ChunkPosition, ChunkSection, LocalBlockPosition, SectionPosition, TerrainGenerator, World};
 use web_sys::{
     HtmlCanvasElement, WebGlBuffer, WebGlProgram, WebGlRenderingContext as Gl,
     WebGlShader, WebGlTexture, WebGlUniformLocation,
@@ -1352,6 +1352,41 @@ pub fn apply_singleplayer_worker_snapshot(bytes: &[u8]) -> Result<(), JsValue> {
         renderer.singleplayer_server = Some(server);
         renderer.singleplayer_worker_active = true;
         renderer.section_meshes = meshes;
+        Ok(())
+    })
+}
+
+/// Apply authoritative worker section replacements and unloads to the renderer mirror.
+/// Update records contain x/y/z followed by 4096 project-local block-state IDs.
+pub fn apply_singleplayer_worker_section_deltas(updates: &[i32], removed: &[i32]) -> Result<(), JsValue> {
+    const RECORD: usize = 3 + crate::world::SECTION_VOLUME;
+    if updates.len() % RECORD != 0 || removed.len() % 3 != 0 {
+        return Err(JsValue::from_str("Malformed worker section delta payload"));
+    }
+    RENDERER.with(|slot| {
+        let mut borrowed = slot.borrow_mut();
+        let renderer = borrowed.as_mut().ok_or_else(|| JsValue::from_str("Renderer has not been started"))?;
+        if renderer.server_world_active || !renderer.singleplayer_worker_active {
+            return Err(JsValue::from_str("Worker deltas require active singleplayer mode"));
+        }
+        for record in updates.chunks_exact(RECORD) {
+            let position = SectionPosition::new(record[0], record[1], record[2]);
+            let mut section = ChunkSection::new();
+            for (index, state) in record[3..].iter().enumerate() {
+                section.set(LocalBlockPosition {
+                    x: (index % 16) as u8,
+                    y: (index / 256) as u8,
+                    z: ((index / 16) % 16) as u8,
+                }, BlockStateId(*state as u32));
+            }
+            renderer.world.replace_section(position, section);
+        }
+        for record in removed.chunks_exact(3) {
+            renderer.world.remove_section(SectionPosition::new(record[0], record[1], record[2]));
+        }
+        if !update_dirty_section_meshes(renderer) {
+            return Err(JsValue::from_str("Could not rebuild worker section meshes"));
+        }
         Ok(())
     })
 }
