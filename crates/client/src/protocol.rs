@@ -726,20 +726,24 @@ mod tests {
     fn configuration_keepalive_and_ping_are_echoed() {
         let mut s = ProtocolSession::new();
         s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
-        s.process_server_message(&encode_ws_packet(2, &[])).unwrap();
-        for id in [3, 4] {
-            let payload = 123456_i64.to_be_bytes();
-            assert_eq!(s.process_server_message(&encode_ws_packet(id, &payload)),
-                Ok(vec![ProtocolEvent::Send(encode_ws_packet(id, &payload))]));
-        }
+        s.process_server_message(&encode_ws_packet(0x03, &[])).unwrap();
+        let keep_alive = 123456_i64.to_be_bytes();
+        assert_eq!(
+            s.process_server_message(&encode_ws_packet(0x04, &keep_alive)),
+            Ok(vec![ProtocolEvent::Send(encode_ws_packet(0x04, &keep_alive))])
+        );
+        let ping = 123456_i32.to_be_bytes();
+        assert_eq!(
+            s.process_server_message(&encode_ws_packet(0x05, &ping)),
+            Ok(vec![ProtocolEvent::Send(encode_ws_packet(0x05, &ping))])
+        );
     }
 
     #[test]
     fn play_keepalive_uses_client_response_packet_id() {
         let mut s = ProtocolSession::new();
         s.begin_login("host", 25565, "Player", [0; 16]).unwrap();
-        s.process_server_message(&encode_ws_packet(2, &[])).unwrap();
-        s.process_server_message(&encode_ws_packet(2, &[])).unwrap();
+        s.process_server_message(&encode_ws_packet(0x03, &[])).unwrap();
         let payload = (-77_i64).to_be_bytes();
         assert_eq!(s.process_server_message(&encode_ws_packet(0x2c, &payload)),
             Ok(vec![ProtocolEvent::Send(encode_ws_packet(0x11, &payload))]));
