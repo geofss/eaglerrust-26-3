@@ -205,7 +205,7 @@ mod tests {
         bytes[0] = b'X';
         assert!(matches!(SingleplayerSave::decode(&bytes), Err(SingleplayerSaveError::InvalidMagic)));
         let mut bytes = SingleplayerSave {
-            seed: 1, player_position: [0.0; 3], yaw: 0.0, pitch: 0.0, game_mode: 1, world: World::new(),
+            seed: 1, player_position: [0.0; 3], yaw: 0.0, pitch: 0.0, game_mode: 1, world_time: 0, day_time: 0, world: World::new(),
         }.encode().unwrap();
         bytes.push(0);
         assert!(matches!(SingleplayerSave::decode(&bytes), Err(SingleplayerSaveError::InvalidLength)));
