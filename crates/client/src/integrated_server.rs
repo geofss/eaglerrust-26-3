@@ -267,6 +267,7 @@ mod tests {
     #[test]
     fn save_snapshot_contains_server_owned_player_and_world_state() {
         let mut server = IntegratedServer::new(456, 1);
+        server.set_game_mode(GameMode::Survival);
         let mut player = server.player();
         player.position = [12.0, 15.0, -8.0];
         player.yaw = 1.25;
@@ -276,8 +277,12 @@ mod tests {
         assert_eq!(restored.seed, 456);
         assert_eq!(restored.player_position, player.position);
         assert_eq!(restored.yaw, player.yaw);
-        assert_eq!(restored.game_mode, GameMode::Creative.as_u8());
+        assert_eq!(restored.game_mode, GameMode::Survival.as_u8());
         assert_eq!(restored.world_time, server.world_time());
         assert_eq!(restored.day_time, server.day_time());
+        let restored_server = IntegratedServer::from_save(restored, 1);
+        assert_eq!(restored_server.game_mode(), GameMode::Survival);
+        assert_eq!(restored_server.world_time(), server.world_time());
+        assert_eq!(restored_server.day_time(), server.day_time());
     }
 }
