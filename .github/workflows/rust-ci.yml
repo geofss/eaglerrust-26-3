@@ -41,3 +41,6 @@ jobs:
           Path("/tmp/eaglerrust-page.mjs").write_text(html[start:end])
           PY
           node --check /tmp/eaglerrust-page.mjs
+
+      - name: Validate local mock server syntax
+        run: python -m py_compile tools/mock_eagler_v5_server.py
