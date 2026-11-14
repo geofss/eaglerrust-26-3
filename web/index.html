@@ -685,6 +685,7 @@
           if (parsedEndpoint.port) port = Number(parsedEndpoint.port);
           const uuid = crypto.randomUUID().replaceAll("-", "");
           connect_reference_server_with_protocol(endpoint, host, port, username, uuid, subprotocol);
+          if (workerReady) postWorker({ type: "pause", paused: true });
           connectButton.disabled = true;
           disconnectButton.disabled = false;
           networkStatus.textContent = "Network: connecting…";
@@ -695,6 +696,7 @@
       });
       disconnectButton.addEventListener("click", () => {
         disconnect_reference_server();
+        if (workerReady && !document.hidden) postWorker({ type: "pause", paused: false });
         connectButton.disabled = false;
         disconnectButton.disabled = true;
         networkStatus.textContent = "Network: disconnected";
@@ -782,10 +784,13 @@
         }
       });
       document.addEventListener("visibilitychange", () => {
-        set_singleplayer_paused(document.hidden);
+        const networkState = reference_connection_state();
+        const networkActive = networkState !== "disconnected" && networkState !== "failed";
+        const shouldPause = document.hidden || networkActive;
+        set_singleplayer_paused(shouldPause);
         if (workerReady) {
           const requestId = nextWorkerRequest();
-          postWorker({ type: "pause", requestId, paused: document.hidden });
+          postWorker({ type: "pause", requestId, paused: shouldPause });
           if (document.hidden) requestWorkerSave().catch(() => {});
         }
       });
@@ -868,6 +873,7 @@
             const extensions = reference_websocket_extensions() || "(none)";
             networkStatus.textContent = `Network: ${networkState} · protocol=${selectedProtocol} · extensions=${extensions}`;
           } else if (networkState === "failed" || networkState === "disconnected") {
+            if (workerReady && !document.hidden) postWorker({ type: "pause", paused: false });
             if (connectButton.disabled) {
               disconnect_reference_server();
               connectButton.disabled = false;
