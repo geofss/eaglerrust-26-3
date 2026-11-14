@@ -31,6 +31,7 @@ function send(ws, bytes, label) {
 }
 
 const ws = new WebSocket(endpoint);
+ws.binaryType = "arraybuffer";
 let stage = "open";
 let done = false;
 const timer = setTimeout(() => fail(new Error(`timeout during ${stage}`)), timeoutMs);
