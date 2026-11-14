@@ -1,0 +1,27 @@
+name: External Eagler V5 multiplayer smoke test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "protocol/**"
+
+permissions:
+  contents: read
+
+jobs:
+  probe-8b4t:
+    name: Probe 8b4t from GitHub-hosted network
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify external DNS, TLS, WebSocket, and Eagler V5 login
+        env:
+          EAGLER_WS_URL: wss://8b4t.org
+        run: node tools/probe_8b4t_v5.mjs
