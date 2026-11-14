@@ -15,6 +15,24 @@ function readU16(b, p) {
   if (p + 2 > b.length) throw new Error("truncated u16");
   return [b.readUInt16BE(p), p + 2];
 }
+function readVarInt(b, p) {
+  let value = 0, shift = 0;
+  while (shift < 35) {
+    if (p >= b.length) throw new Error("truncated VarInt");
+    const byte = b[p++];
+    value |= (byte & 0x7f) << shift;
+    if ((byte & 0x80) === 0) return [value >>> 0, p];
+    shift += 7;
+  }
+  throw new Error("VarInt too wide");
+}
+function varInt(n) {
+  const out = [];
+  n >>>= 0;
+  while ((n & ~0x7f) !== 0) { out.push((n & 0x7f) | 0x80); n >>>= 7; }
+  out.push(n);
+  return out;
+}
 function readAscii(b, p) {
   if (p >= b.length) throw new Error("truncated ASCII length");
   const n = b[p++];
@@ -73,19 +91,27 @@ ws.addEventListener("message", (event) => {
       auth = data[p++];
       [saltLen, p] = readU16(data, p);
       if (p + saltLen > data.length) throw new Error("truncated salt");
-      console.log(`SERVER_VERSION eagler=${eagler} java=${java} brand='${brand}' version='${version}' auth=${auth} saltBytes=${saltLen}`);
+      p += saltLen;
+      if (p >= data.length) throw new Error("missing V5 nickname-selection flag");
+      const nicknameSelection = data[p++] !== 0;
+      if (p !== data.length) throw new Error(`unexpected SERVER_VERSION trailing bytes: ${data.length - p}`);
+      console.log(`SERVER_VERSION eagler=${eagler} java=${java} brand='${brand}' version='${version}' auth=${auth} saltBytes=${saltLen} nicknameSelection=${nicknameSelection}`);
       if (eagler !== 5 || java !== 777) throw new Error(`incompatible protocol: expected Eagler 5 / Java 777, got ${eagler} / ${java}`);
       stage = "allow-login";
+      const standardCaps = (1 << 2) | (1 << 3) | (1 << 4); // REDIRECT, NOTIFICATION, PAUSE_MENU
       send(ws, [
         0x04,
-        ...ascii(username),       // username
-        ...ascii(""),             // requested backend (default)
+        ...(nicknameSelection ? ascii(username) : ascii("")),
+        ...ascii("default"),      // HandshakerInstance requests the default backend
         0,                        // empty auth password
-        0,                        // no cookie offered
-        0,                        // zero cookie bytes
-        0,                        // no optional capabilities (VarInt 0)
-        0                         // no extended capabilities
-      ], "EAGLER V5 CLIENT_REQUEST_LOGIN (full client-side request fields)");
+        0,                        // enableCookies = false
+        0,                        // cookie length
+        ...varInt(standardCaps),  // standard capability bitmask
+        ...varInt(0),             // REDIRECT version bitset
+        ...varInt(0),             // NOTIFICATION version bitset
+        ...varInt(0),             // PAUSE_MENU version bitset
+        0                         // zero extended capabilities
+      ], "EAGLER V5 CLIENT_REQUEST_LOGIN (source-matched V5 layout)");
       return;
     }
     if (stage === "allow-login") {
@@ -111,9 +137,27 @@ ws.addEventListener("message", (event) => {
       [name, p] = readAscii(data, p);
       if (p + 16 > data.length) throw new Error("ALLOW_LOGIN missing UUID");
       const uuid = data.subarray(p, p + 16).toString("hex");
-      console.log(`ALLOW_LOGIN name='${name}' uuid=${uuid}`);
-      stage = "server-finish";
-      send(ws, [0x08], "CLIENT_FINISH_LOGIN");
+      p += 16;
+      const [standardCaps, afterCaps] = readVarInt(data, p);
+      p = afterCaps;
+      const versionCount = standardCaps.toString(2).replace(/0/g, "").length;
+      if (p + versionCount > data.length) throw new Error("ALLOW_LOGIN truncated standard capability versions");
+      const standardCapVersions = [...data.subarray(p, p + versionCount)];
+      p += versionCount;
+      if (p >= data.length) throw new Error("ALLOW_LOGIN missing extended capability count");
+      const extendedCaps = data[p++];
+      for (let i = 0; i < extendedCaps; i++) {
+        if (p + 17 > data.length) throw new Error("ALLOW_LOGIN truncated extended capability entry");
+        p += 16;
+        const [, next] = readVarInt(data, p);
+        p = next;
+      }
+      if (p !== data.length) throw new Error(`ALLOW_LOGIN unexpected trailing bytes: ${data.length - p}`);
+      console.log(`ALLOW_LOGIN name='${name}' uuid=${uuid} standardCaps=0x${standardCaps.toString(16)} versions=${standardCapVersions.join(",")} extendedCaps=${extendedCaps}`);
+      // Stop here deliberately: the real client sends profile-data packets (brand UUID,
+      // skin, cape, update certificate) before CLIENT_FINISH_LOGIN. This probe isolates
+      // whether the corrected CLIENT_REQUEST_LOGIN is accepted without faking those assets.
+      finish("PASS: Eagler V5 CLIENT_REQUEST_LOGIN accepted (SERVER_ALLOW_LOGIN received). Profile-data and finish-login stages remain untested.");
       return;
     }
     if (stage === "server-finish") {
