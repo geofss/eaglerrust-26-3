@@ -111,12 +111,25 @@ packet, the transition to Play, and a keepalive response.
 This fixture is **not** EaglerXServer and does not emulate a real Minecraft backend or world.
 It verifies the client's transport/state-machine exchange only.
 
+Build and serve the browser page (terminal 1):
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack
+cd crates/client
+wasm-pack build --target web --release --out-dir ../../web/pkg
+cd ../..
+python -m http.server 8000
+```
+
+Install and start the mock endpoint (terminal 2):
+
 ```sh
 python -m pip install -r tools/requirements-test.txt
 python tools/mock_eagler_v5_server.py
 ```
 
-Then serve the project page locally and connect to `ws://127.0.0.1:8765`. The page permits
+Open `http://127.0.0.1:8000/web/` and connect to `ws://127.0.0.1:8765`. The page permits
 unencrypted `ws://` only for loopback hosts; non-local endpoints are upgraded to `wss://`.
 Open the browser developer console to inspect `onopen`, `onerror`, `onclose`, V5 preamble,
 packet IDs, VarInts, and state transitions. The mock prints each exchange on the server side.
